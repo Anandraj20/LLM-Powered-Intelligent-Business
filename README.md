@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # BusinessMind AI
 
 BusinessMind AI is an intelligent, LLM-powered business intelligence platform designed to aggregate enterprise data from relational and document databases, deliver predictive analytics and time-series forecasting, automate reporting pipelines, and provide an interactive conversational AI assistant — empowering data-driven decision-making across every business domain through a modern, full-stack architecture.
@@ -117,3 +118,7 @@ Copy `.env.example` (when created) to `.env` in each service directory and fill 
 | `OPENAI_API_KEY` | ai-service | OpenAI API key |
 | `NEXTAUTH_SECRET` | frontend | NextAuth signing secret |
 | `NEXTAUTH_URL` | frontend | Canonical frontend URL |
+=======
+# LLM-Powered-Intelligent-Business
+An AI-powered Business Intelligence platform that leverages Large Language Models (LLMs), Machine Learning, and Predictive Analytics to monitor business performance, generate intelligent insights, forecast trends, and provide data-driven recommendations through an interactive dashboard and conversational AI assistant.
+>>>>>>> 7496b9597514853e7ed241257915192195268d37
