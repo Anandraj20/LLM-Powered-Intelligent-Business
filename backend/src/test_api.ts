@@ -23,12 +23,12 @@ async function runVerificationSuite() {
   // Test FR1.1 & FR1.3: Login & JWT Tokens
   console.log('\n[2/6] Testing FR1.1 & FR1.3: Login & JWT Access/Refresh Tokens...');
   const loginRes = await authService.login('test.owner@apex.com', 'SecurePassword123!');
-  console.log('✅ Login successful. Access Token generated:', loginRes.tokens.accessToken.slice(0, 20) + '...');
-  console.log('✅ Refresh Token generated:', loginRes.tokens.refreshToken.slice(0, 20) + '...');
+  console.log('✅ Login successful. Access Token generated:', loginRes.tokens!.accessToken.slice(0, 20) + '...');
+  console.log('✅ Refresh Token generated:', loginRes.tokens!.refreshToken.slice(0, 20) + '...');
 
   // Test FR1.3: Silent Token Renewal
   console.log('\n[3/6] Testing FR1.3: Silent Refresh Token Renewal...');
-  const refreshedTokens = await authService.refreshToken(loginRes.tokens.refreshToken);
+  const refreshedTokens = await authService.refreshToken(loginRes.tokens!.refreshToken);
   console.log('✅ Token renewed silently. New Access Token:', refreshedTokens.accessToken.slice(0, 20) + '...');
 
   // Test FR1.2: RBAC Matrix

@@ -1,5 +1,7 @@
-import express, { Application, Request, Response } from 'express';
+import express, { Application, Request, Response, NextFunction } from 'express';
 import cors from 'cors';
+import helmet from 'helmet';
+import rateLimit from 'express-rate-limit';
 import authRoutes from './routes/auth.routes';
 import organizationRoutes from './routes/organization.routes';
 import onboardingRoutes from './routes/onboarding.routes';
@@ -9,9 +11,109 @@ import { UserRole } from './config/permissions';
 
 const app: Application = express();
 
-app.use(cors());
+// Trust proxy for correct IP identification behind reverse proxies/load balancers
+app.set('trust proxy', 1);
+
+// Configure Secure Security Headers using Helmet
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'", "'unsafe-inline'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      imgSrc: ["'self'", "data:", "https:"],
+      connectSrc: ["'self'", "http://localhost:5000", "http://localhost:3000"]
+    }
+  },
+  hsts: {
+    maxAge: 31536000, // 1 year
+    includeSubDomains: true,
+    preload: true
+  },
+  xContentTypeOptions: true,
+  xFrameOptions: { action: 'deny' },
+  referrerPolicy: { policy: 'no-referrer' }
+}));
+
+// Configure CORS
+app.use(cors({
+  origin: process.env.CORS_ORIGIN || 'http://localhost:3000',
+  credentials: true, // Allow cookie-based authentication
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-CSRF-Token']
+}));
+
 app.use(express.json({ limit: '25mb' }));
 app.use(express.urlencoded({ extended: true, limit: '25mb' }));
+
+// Custom Cookie Parser Middleware to avoid external dependency issues
+app.use((req: any, res: Response, next: NextFunction) => {
+  req.cookies = {};
+  const cookieHeader = req.headers.cookie;
+  if (cookieHeader) {
+    cookieHeader.split(';').forEach((c: string) => {
+      const parts = c.split('=');
+      if (parts.length >= 2) {
+        req.cookies[parts[0].trim()] = parts.slice(1).join('=').trim();
+      }
+    });
+  }
+  next();
+});
+
+// Custom Double-Submit Cookie CSRF Middleware
+const csrfProtection = (req: any, res: Response, next: NextFunction) => {
+  // Safe methods do not require CSRF validation
+  if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) {
+    return next();
+  }
+
+  // Bypass CSRF checks for public API/Auth endpoints
+  const publicPaths = [
+    '/api/v1/auth/login',
+    '/api/v1/auth/register',
+    '/api/v1/auth/google',
+    '/api/v1/auth/refresh',
+    '/api/v1/auth/forgot-password',
+    '/api/v1/auth/reset-password',
+    '/api/v1/auth/verify-email',
+    '/api/v1/auth/captcha',
+    '/api/health',
+    '/api/v1'
+  ];
+
+  if (publicPaths.some(path => req.path.startsWith(path))) {
+    return next();
+  }
+
+  const csrfCookie = req.cookies?.csrfToken;
+  const csrfHeader = req.headers['x-csrf-token'];
+
+  if (!csrfCookie || !csrfHeader || csrfCookie !== csrfHeader) {
+    return res.status(403).json({
+      success: false,
+      message: 'CSRF token mismatch or missing'
+    });
+  }
+
+  next();
+};
+
+app.use(csrfProtection);
+
+// Configure IP Rate Limiting for Authentication Endpoints (Max 20 requests per 15 minutes)
+const authRateLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 20,
+  message: {
+    success: false,
+    message: 'Too many authentication attempts from this IP, please try again after 15 minutes'
+  },
+  standardHeaders: true,
+  legacyHeaders: false
+});
+
+app.use('/api/v1/auth', authRateLimiter);
 
 // Register REST API Route Handlers
 app.use('/api/v1/auth', authRoutes);
