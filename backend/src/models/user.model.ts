@@ -15,6 +15,18 @@ export interface User {
   passwordResetExpires?: Date | null;
   emailVerificationToken?: string | null;
   refreshTokens: string[];
+  failedLoginAttempts: number;
+  lockoutUntil: Date | null;
+  mfaEnabled: boolean;
+  mfaSecret: string | null;
+  loginHistory: Array<{
+    timestamp: Date;
+    ip: string;
+    userAgent: string;
+    status: 'success' | 'failed' | 'locked';
+    details?: string;
+  }>;
+  lastActiveAt: Date;
   createdAt: Date;
   updatedAt: Date;
 }
