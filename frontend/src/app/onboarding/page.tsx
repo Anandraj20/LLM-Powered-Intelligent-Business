@@ -107,7 +107,7 @@ export default function OnboardingPage() {
         erpProvider,
         datasetType,
         apiKey
-      });
+      }, { timeout: 300 });
       if (res.data.success) {
         setBatchResult(res.data.data);
       }
