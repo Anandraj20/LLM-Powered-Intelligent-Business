@@ -82,11 +82,30 @@ export class DataPipelineService {
       recordsToImport
     );
 
+    // Synchronize uploaded dataset with MySQL Database and FAISS Vector RAG index
+    try {
+      const formattedRecords = recordsToImport.map(r => ({
+        product_name: r.productName || r.customerName || r.itemCode || 'Standard Item',
+        quantity: Number(r.quantity || 1),
+        unit_price: Number(r.unitPrice || r.amount || 0),
+        revenue: Number(r.amount || r.total || (Number(r.quantity || 1) * Number(r.unitPrice || 0))),
+        cost: Number(r.cost || 0),
+        category: r.category || batch.datasetType,
+        customer_region: r.region || 'Domestic'
+      }));
+
+      const { mysqlPipelineService } = await import('./mysql.service');
+      await mysqlPipelineService.saveSalesDataset(batch.fileName, formattedRecords);
+    } catch (pipelineErr: any) {
+      console.warn('MySQL/RAG pipeline sync warning:', pipelineErr.message);
+    }
+
     batch.status = 'imported';
     batch.importedAt = new Date();
     await onboardingStore.saveBatch(batch);
 
     return { importedCount: recordsToImport.length };
+
   }
 
   /**

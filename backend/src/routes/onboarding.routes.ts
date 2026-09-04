@@ -170,4 +170,177 @@ router.get(
   }
 );
 
+// ⚡ Direct Database Upload & Train Pipeline (Uploads directly to businessmind_db & trains Ollama)
+router.post(
+  '/direct-upload',
+  upload.single('file'),
+  async (req: any, res: Response) => {
+    try {
+      if (!req.file) {
+        return res.status(400).json({
+          success: false,
+          message: 'No file attached. Please select a CSV, Excel, or JSON dataset.'
+        });
+      }
+
+      const fileName = req.file.originalname;
+      const datasetType = (req.body.datasetType || 'sales') as string;
+      const userId = req.user?.id || 'admin';
+      const orgId = req.user?.organizationId || 'default-org-id';
+
+      // Parse raw rows based on file extension
+      let rawRows: any[] = [];
+      const lowerName = fileName.toLowerCase();
+
+      if (lowerName.endsWith('.csv')) {
+        const { parse: parseCsv } = await import('csv-parse/sync');
+        rawRows = parseCsv(req.file.buffer.toString('utf-8'), {
+          columns: true,
+          skip_empty_lines: true,
+          trim: true
+        });
+      } else if (lowerName.endsWith('.xlsx') || lowerName.endsWith('.xls')) {
+        const xlsx = await import('xlsx');
+        const workbook = xlsx.read(req.file.buffer, { type: 'buffer' });
+        const firstSheetName = workbook.SheetNames[0];
+        rawRows = xlsx.utils.sheet_to_json(workbook.Sheets[firstSheetName]);
+      } else if (lowerName.endsWith('.json')) {
+        rawRows = JSON.parse(req.file.buffer.toString('utf-8'));
+        if (!Array.isArray(rawRows)) {
+          rawRows = [rawRows];
+        }
+      } else {
+        return res.status(400).json({
+          success: false,
+          message: 'Unsupported format. Please upload .csv, .xlsx, .xls, or .json'
+        });
+      }
+
+      if (!rawRows || rawRows.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'The uploaded file contains no data rows.'
+        });
+      }
+
+      // Normalize generic rows for businessmind_db
+      const { mysqlPipelineService } = await import('../services/mysql.service');
+      const normalizedRecords = rawRows.map(row => 
+        mysqlPipelineService.normalizeGenericRow(row, datasetType)
+      );
+
+      // Save directly into businessmind_db and trigger Ollama RAG training
+      const result = await mysqlPipelineService.saveSalesDataset(
+        fileName,
+        normalizedRecords,
+        userId,
+        orgId
+      );
+
+      return res.status(200).json({
+        success: true,
+        message: `Dataset '${fileName}' successfully ingested into businessmind_db! ${result.insertedCount} records saved and Ollama AI knowledge trained.`,
+        data: {
+          datasetId: result.datasetId,
+          fileName,
+          totalRows: result.insertedCount,
+          ragTrained: result.ragTrained,
+          trainingInfo: result.trainingInfo
+        }
+      });
+    } catch (error: any) {
+      console.error('Direct upload error:', error);
+      return res.status(500).json({
+        success: false,
+        message: error.message || 'Direct upload to database failed'
+      });
+    }
+  }
+);
+
+// 🔄 Sync Database & Train Ollama Pipeline
+router.post(
+  '/sync-database',
+  async (_req: any, res: Response) => {
+    try {
+      const { mysqlPipelineService } = await import('../services/mysql.service');
+      const trainResult = await mysqlPipelineService.triggerOllamaTraining();
+
+      return res.status(200).json({
+        success: trainResult?.success !== false,
+        message: trainResult?.message || 'Database synchronized and Ollama AI trained successfully',
+        data: trainResult
+      });
+    } catch (error: any) {
+      return res.status(500).json({
+        success: false,
+        message: error.message || 'Database synchronization failed'
+      });
+    }
+  }
+);
+
+// 📂 Ingested Datasets in MySQL (Direct Catalog)
+router.get(
+  '/datasets',
+  async (_req: any, res: Response) => {
+    try {
+      const { mysqlPipelineService } = await import('../services/mysql.service');
+      const stats = await mysqlPipelineService.getMonitoringStats();
+
+      return res.status(200).json({
+        success: true,
+        data: stats.database?.uploaded_datasets || [],
+        summary: stats.database?.summary || {},
+        total: stats.database?.total_datasets || 0
+      });
+    } catch (error: any) {
+      return res.status(500).json({
+        success: false,
+        message: error.message || 'Failed to list datasets'
+      });
+    }
+  }
+);
+
+// 📊 Live Data & AI Resource Monitoring Endpoint
+router.get(
+  '/monitoring',
+  async (_req: any, res: Response) => {
+    try {
+      const { mysqlPipelineService } = await import('../services/mysql.service');
+      const stats = await mysqlPipelineService.getMonitoringStats();
+
+      return res.status(200).json({
+        success: true,
+        data: stats
+      });
+    } catch (error: any) {
+      return res.status(500).json({
+        success: false,
+        message: error.message || 'Failed to fetch monitoring metrics'
+      });
+    }
+  }
+);
+
+// 🗑️ Delete Uploaded Dataset Record
+router.delete(
+  ['/dataset/:id', '/datasets/:id'],
+  async (req: any, res: Response) => {
+    try {
+      const { mysqlPipelineService } = await import('../services/mysql.service');
+      const result = await mysqlPipelineService.deleteDataset(req.params.id);
+
+      return res.status(result.success ? 200 : 400).json(result);
+    } catch (error: any) {
+      return res.status(500).json({
+        success: false,
+        message: error.message || 'Failed to delete dataset'
+      });
+    }
+  }
+);
+
 export default router;
+

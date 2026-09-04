@@ -5,11 +5,15 @@ import rateLimit from 'express-rate-limit';
 import authRoutes from './routes/auth.routes';
 import organizationRoutes from './routes/organization.routes';
 import onboardingRoutes from './routes/onboarding.routes';
+import aiRoutes from './routes/ai.routes';
+import { dbConfig } from './config/database';
 import { authService } from './services/auth.service';
 import { orgService } from './services/organization.service';
 import { UserRole } from './config/permissions';
 
 const app: Application = express();
+
+
 
 // Trust proxy for correct IP identification behind reverse proxies/load balancers
 app.set('trust proxy', 1);
@@ -22,7 +26,7 @@ app.use(helmet({
       scriptSrc: ["'self'", "'unsafe-inline'"],
       styleSrc: ["'self'", "'unsafe-inline'"],
       imgSrc: ["'self'", "data:", "https:"],
-      connectSrc: ["'self'", "http://localhost:5000", "http://localhost:3000"]
+      connectSrc: ["'self'", "http://localhost:5000", "http://localhost:3000", "http://localhost:8000"]
     }
   },
   hsts: {
@@ -79,7 +83,10 @@ const csrfProtection = (req: any, res: Response, next: NextFunction) => {
     '/api/v1/auth/verify-email',
     '/api/v1/auth/captcha',
     '/api/health',
-    '/api/v1'
+    '/api/v1',
+    '/api/v1/ai',
+    '/api/v1/rag',
+    '/api/v1/onboarding'
   ];
 
   if (publicPaths.some(path => req.path.startsWith(path))) {
@@ -119,6 +126,9 @@ app.use('/api/v1/auth', authRateLimiter);
 app.use('/api/v1/auth', authRoutes);
 app.use('/api/v1/organization', organizationRoutes);
 app.use('/api/v1/onboarding', onboardingRoutes);
+app.use('/api/v1/ai', aiRoutes);
+app.use('/api/v1/rag', aiRoutes);
+
 
 app.get('/api/health', (req: Request, res: Response) => {
   res.status(200).json({
@@ -127,6 +137,17 @@ app.get('/api/health', (req: Request, res: Response) => {
     timestamp: new Date().toISOString()
   });
 });
+
+app.get('/api/health/db', async (req: Request, res: Response) => {
+  const isDbConnected = await dbConfig.testConnection();
+  res.status(isDbConnected ? 200 : 503).json({
+    status: isDbConnected ? 'connected' : 'disconnected',
+    database: process.env.MYSQL_DATABASE || 'businessmind_db',
+    host: process.env.MYSQL_HOST || 'localhost',
+    timestamp: new Date().toISOString()
+  });
+});
+
 
 app.get('/api/v1', (req: Request, res: Response) => {
   res.json({

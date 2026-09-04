@@ -6,8 +6,10 @@ import { useAuth } from '../../context/AuthContext';
 import { ProtectedRoute } from '../../components/common/ProtectedRoute';
 import { Sidebar } from '../../components/layout/Sidebar';
 import { Navbar } from '../../components/layout/Navbar';
+import { BusinessMindChat } from '../../components/chat/BusinessMindChat';
 import { hasPermission, ROLE_BADGE_COLORS } from '../../config/permissions';
 import {
+
   TrendingUp,
   DollarSign,
   Package,
@@ -76,8 +78,14 @@ export default function DashboardPage() {
               </div>
             </div>
 
+            {/* BusinessMind AI Executive Assistant Chat Widget */}
+            <section className="w-full">
+              <BusinessMindChat />
+            </section>
+
             {/* Permission-Scoped Module Cards Grid (FR1.4) */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+
 
               {/* 1. Sales Module (FR1.4: Permitted for Owner, Admin, Manager, Sales Person, Accountant) */}
               {canViewSales ? (
