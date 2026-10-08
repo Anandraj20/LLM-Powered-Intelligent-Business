@@ -25,6 +25,39 @@ export interface AuthTokens {
   expiresIn: number; // in seconds
 }
 
+// ── Username Generation ───────────────────────────────────────────────────────
+
+/**
+ * Generate a unique username from a display name or email.
+ * Pattern: first_part + optional 3-digit suffix if taken
+ */
+async function generateUniqueUsername(name: string, email: string): Promise<string> {
+  // Derive base from name (first word + first char of second word) or email prefix
+  const nameParts = name.trim().toLowerCase().split(/\s+/);
+  let base: string;
+  if (nameParts.length >= 2) {
+    base = `${nameParts[0]}_${nameParts[1].charAt(0)}`;
+  } else {
+    base = nameParts[0] || email.split('@')[0];
+  }
+
+  // Sanitise: keep only alphanumeric and underscores, max 20 chars
+  base = base.replace(/[^a-z0-9_]/g, '').slice(0, 20);
+  if (!base) base = 'user';
+
+  // Check uniqueness; append suffix if taken
+  let candidate = base;
+  let taken = await userStore.isUsernameTaken(candidate);
+  let attempts = 0;
+  while (taken && attempts < 10) {
+    attempts++;
+    const suffix = Math.floor(100 + Math.random() * 900); // 3-digit
+    candidate = `${base}_${suffix}`;
+    taken = await userStore.isUsernameTaken(candidate);
+  }
+  return candidate;
+}
+
 export class AuthService {
   private generateTokens(user: User): AuthTokens {
     const payload = {
@@ -58,10 +91,12 @@ export class AuthService {
     email: string;
     password?: string;
     name: string;
+    username?: string;
     role?: UserRole;
     organizationId?: string;
     authProvider?: 'local' | 'google';
     googleId?: string;
+    avatarUrl?: string;
   }): Promise<{ user: Omit<User, 'passwordHash'>; tokens: AuthTokens }> {
     const existing = await userStore.findByEmail(data.email);
     if (existing) {
@@ -77,13 +112,28 @@ export class AuthService {
       if (!validation.isValid) {
         throw new Error(validation.message);
       }
-      // FR1.5: Salted password hashing with bcrypt
       const salt = await bcrypt.genSalt(10);
       passwordHash = await bcrypt.hash(data.password, salt);
     }
 
+    // Resolve username — use provided one or auto-generate
+    let username = data.username?.toLowerCase().trim() || '';
+    if (!username) {
+      username = await generateUniqueUsername(data.name, data.email);
+    } else {
+      // Validate provided username format
+      if (!/^[a-z0-9_]{3,30}$/.test(username)) {
+        throw new Error('Username must be 3-30 chars: letters, numbers, underscores only');
+      }
+      const taken = await userStore.isUsernameTaken(username);
+      if (taken) {
+        throw new Error('Username is already taken. Please choose another.');
+      }
+    }
+
     const newUser: User = {
       id: uuidv4(),
+      username,
       email: data.email.toLowerCase().trim(),
       passwordHash,
       name: data.name,
@@ -92,6 +142,7 @@ export class AuthService {
       emailVerified: data.authProvider === 'google',
       authProvider: data.authProvider || 'local',
       googleId: data.googleId || null,
+      avatarUrl: data.avatarUrl || null,
       emailVerificationToken: data.authProvider === 'google' ? null : uuidv4(),
       refreshTokens: [],
       failedLoginAttempts: 0,
@@ -113,22 +164,24 @@ export class AuthService {
     return { user: safeUser, tokens };
   }
 
+  /**
+   * Login accepts email OR username as identifier
+   */
   async login(
-    email: string,
+    identifier: string,
     password?: string,
     clientIp = 'unknown',
     userAgent = 'unknown'
   ): Promise<{ user: Omit<User, 'passwordHash'>; tokens?: AuthTokens; mfaRequired?: boolean; mfaTicket?: string }> {
-    const user = await userStore.findByEmail(email);
+    // Try both email and username lookup
+    const user = await userStore.findByEmailOrUsername(identifier);
     if (!user) {
-      throw new Error('Invalid email or password');
+      throw new Error('Invalid credentials. Check your email/username and password.');
     }
 
     // Check lockout status
     if (user.lockoutUntil && user.lockoutUntil > new Date()) {
       const remainingMinutes = Math.ceil((user.lockoutUntil.getTime() - Date.now()) / 60000);
-      
-      // Log failed attempt due to lockout
       user.loginHistory = user.loginHistory || [];
       user.loginHistory.push({
         timestamp: new Date(),
@@ -138,34 +191,29 @@ export class AuthService {
         details: 'Attempted login while account is locked'
       });
       await userStore.save(user);
-
       throw new Error(`Account is temporarily locked. Try again in ${remainingMinutes} minute(s).`);
     }
 
     if (user.authProvider === 'google' && !user.passwordHash) {
-      throw new Error('Account created with Google OAuth. Please sign in with Google.');
+      throw new Error('This account uses Google Sign-In. Please click "Sign in with Google".');
     }
 
     if (!user.passwordHash || !password) {
       await this.handleFailedLoginAttempt(user, clientIp, userAgent, 'Missing password or hash');
-      throw new Error('Invalid email or password');
+      throw new Error('Invalid credentials. Check your email/username and password.');
     }
 
     const isMatch = await bcrypt.compare(password, user.passwordHash);
     if (!isMatch) {
       await this.handleFailedLoginAttempt(user, clientIp, userAgent, 'Incorrect password');
-      throw new Error('Invalid email or password');
+      throw new Error('Invalid credentials. Check your email/username and password.');
     }
 
-    // Reset failed login attempts on successful credentials match
     user.failedLoginAttempts = 0;
     user.lockoutUntil = null;
     user.lastActiveAt = new Date();
-
-    // Log successful credentials verification
     user.loginHistory = user.loginHistory || [];
-    
-    // If MFA is enabled, we don't issue full tokens yet
+
     if (user.mfaEnabled) {
       user.loginHistory.push({
         timestamp: new Date(),
@@ -176,7 +224,6 @@ export class AuthService {
       });
       await userStore.save(user);
 
-      // Issue temporary mfaTicket
       const mfaTicket = jwt.sign(
         { userId: user.id, tokenType: 'mfa_ticket' },
         JWT_SECRET,
@@ -187,7 +234,6 @@ export class AuthService {
       return { user: safeUser, mfaRequired: true, mfaTicket };
     }
 
-    // No MFA, proceed to generate regular tokens
     const tokens = this.generateTokens(user);
     const updatedRefreshTokens = [...(user.refreshTokens || []).slice(-4), tokens.refreshToken];
     user.refreshTokens = updatedRefreshTokens;
@@ -199,7 +245,84 @@ export class AuthService {
       status: 'success',
       details: 'Login completed successfully'
     });
-    
+
+    await userStore.save(user);
+
+    const { passwordHash: _, ...safeUser } = user;
+    return { user: safeUser, tokens };
+  }
+
+  /**
+   * Google OAuth sign-in and automated registration
+   */
+  async loginWithGoogle(
+    googleId: string,
+    email: string,
+    name?: string,
+    avatarUrl?: string,
+    role?: UserRole,
+    clientIp = 'unknown',
+    userAgent = 'unknown'
+  ): Promise<{ user: Omit<User, 'passwordHash'>; tokens: AuthTokens }> {
+    const normalizedEmail = email.toLowerCase().trim();
+    let user = (googleId ? await userStore.findByGoogleId(googleId) : null) || (await userStore.findByEmail(normalizedEmail));
+
+    if (!user) {
+      const baseName = (name || normalizedEmail.split('@')[0]).toLowerCase().replace(/[^a-z0-9_]/g, '').slice(0, 20);
+      let candidateUsername = baseName;
+      let suffix = 1;
+      while (await userStore.findByUsername(candidateUsername)) {
+        candidateUsername = `${baseName.slice(0, 16)}_${suffix}`;
+        suffix++;
+      }
+
+      user = {
+        id: uuidv4(),
+        username: candidateUsername,
+        email: normalizedEmail,
+        name: name || normalizedEmail.split('@')[0],
+        role: role || 'Owner',
+        organizationId: null,
+        emailVerified: true,
+        authProvider: 'google',
+        googleId: googleId || null,
+        avatarUrl: avatarUrl || null,
+        refreshTokens: [],
+        failedLoginAttempts: 0,
+        lockoutUntil: null,
+        mfaEnabled: false,
+        mfaSecret: null,
+        loginHistory: [{
+          timestamp: new Date(),
+          ip: clientIp,
+          userAgent,
+          status: 'success',
+          details: 'Google OAuth registration'
+        }],
+        lastActiveAt: new Date(),
+        createdAt: new Date(),
+        updatedAt: new Date()
+      };
+      await userStore.save(user);
+    } else {
+      if (googleId && !user.googleId) user.googleId = googleId;
+      if (avatarUrl && !user.avatarUrl) user.avatarUrl = avatarUrl;
+      if (role && role !== user.role) user.role = role;
+      user.lastActiveAt = new Date();
+      user.loginHistory = user.loginHistory || [];
+      user.loginHistory.push({
+        timestamp: new Date(),
+        ip: clientIp,
+        userAgent,
+        status: 'success',
+        details: 'Google OAuth sign-in'
+      });
+      await userStore.save(user);
+    }
+
+    const tokens = this.generateTokens(user);
+    user.refreshTokens = user.refreshTokens || [];
+    user.refreshTokens.push(tokens.refreshToken);
     await userStore.save(user);
 
     const { passwordHash: _, ...safeUser } = user;
@@ -214,24 +337,17 @@ export class AuthService {
   ): Promise<void> {
     user.failedLoginAttempts = (user.failedLoginAttempts || 0) + 1;
     user.loginHistory = user.loginHistory || [];
-    
+
     let status: 'failed' | 'locked' = 'failed';
     let details = `Failed login attempt: ${reason}. Attempts: ${user.failedLoginAttempts}/5`;
 
     if (user.failedLoginAttempts >= 5) {
-      user.lockoutUntil = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes lockout
+      user.lockoutUntil = new Date(Date.now() + 15 * 60 * 1000);
       status = 'locked';
       details = `Account locked for 15 minutes due to 5 consecutive failures. Last reason: ${reason}`;
     }
 
-    user.loginHistory.push({
-      timestamp: new Date(),
-      ip,
-      userAgent,
-      status,
-      details
-    });
-
+    user.loginHistory.push({ timestamp: new Date(), ip, userAgent, status, details });
     await userStore.save(user);
   }
 
@@ -248,22 +364,15 @@ export class AuthService {
       }
 
       const user = await userStore.findById(decoded.userId);
-      if (!user) {
-        throw new Error('User associated with ticket no longer exists');
-      }
-
-      if (!user.mfaEnabled || !user.mfaSecret) {
-        throw new Error('MFA is not enabled for this user');
-      }
+      if (!user) throw new Error('User associated with ticket no longer exists');
+      if (!user.mfaEnabled || !user.mfaSecret) throw new Error('MFA is not enabled for this user');
 
       const isValid = verifyTOTP(code, user.mfaSecret);
       if (!isValid) {
-        // Increment failed attempts under MFA verify
         await this.handleFailedLoginAttempt(user, clientIp, userAgent, 'Failed MFA OTP check');
         throw new Error('Invalid verification code');
       }
 
-      // Successful MFA confirmation
       user.failedLoginAttempts = 0;
       user.lockoutUntil = null;
       user.lastActiveAt = new Date();
@@ -300,17 +409,19 @@ export class AuthService {
       user = await userStore.findByEmail(data.email);
 
       if (user) {
-        // Link existing email user with googleId
+        // Link existing email account with Google
         user.googleId = data.googleId;
         user.avatarUrl = data.avatarUrl || user.avatarUrl;
         user.emailVerified = true;
+        await userStore.save(user);
       } else {
-        // Register new Google OAuth user
+        // Register new Google user
         const newRecord = await this.register({
           email: data.email,
           name: data.name,
           authProvider: 'google',
           googleId: data.googleId,
+          avatarUrl: data.avatarUrl,
           role: 'Owner'
         });
         return newRecord;
@@ -335,18 +446,14 @@ export class AuthService {
         throw new Error('Invalid refresh token or session revoked');
       }
 
-      // Check session inactivity timeout (30 minutes)
       const INACTIVITY_LIMIT_MS = 30 * 60 * 1000;
       if (user.lastActiveAt && (Date.now() - new Date(user.lastActiveAt).getTime() > INACTIVITY_LIMIT_MS)) {
-        // Expired due to inactivity, clear sessions
         user.refreshTokens = [];
         await userStore.save(user);
         throw new Error('Session expired due to inactivity');
       }
 
       const newTokens = this.generateTokens(user);
-      
-      // Rotate refresh token
       user.refreshTokens = user.refreshTokens.filter(t => t !== refreshToken);
       user.refreshTokens.push(newTokens.refreshToken);
       user.lastActiveAt = new Date();
@@ -383,11 +490,11 @@ export class AuthService {
 
   async requestPasswordReset(email: string): Promise<string | null> {
     const user = await userStore.findByEmail(email);
-    if (!user) return null; // Silent return for security
+    if (!user) return null;
 
     const resetToken = uuidv4();
     user.passwordResetToken = resetToken;
-    user.passwordResetExpires = new Date(Date.now() + 15 * 60 * 1000); // Reduced to 15 minutes for security
+    user.passwordResetExpires = new Date(Date.now() + 15 * 60 * 1000);
 
     await userStore.save(user);
     return resetToken;
@@ -408,8 +515,8 @@ export class AuthService {
     user.passwordHash = await bcrypt.hash(newPassword, salt);
     user.passwordResetToken = null;
     user.passwordResetExpires = null;
-    user.refreshTokens = []; // Revoke all sessions on password change
-    user.failedLoginAttempts = 0; // Reset failed login count
+    user.refreshTokens = [];
+    user.failedLoginAttempts = 0;
     user.lockoutUntil = null;
 
     await userStore.save(user);

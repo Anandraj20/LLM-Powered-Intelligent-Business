@@ -15,7 +15,8 @@ import {
   Package,
   Users,
   ShieldCheck,
-  Zap
+  Zap,
+  BarChart3
 } from 'lucide-react';
 
 interface NavItem {
@@ -75,6 +76,13 @@ export const Sidebar: React.FC = () => {
       href: '/dashboard#users',
       icon: Users,
       requiredPermission: 'users:manage'
+    },
+    {
+      label: 'Analytics Center',
+      href: '/analytics',
+      icon: BarChart3,
+      requiredPermission: 'analytics:view',
+      badge: 'NEW'
     }
   ];
 

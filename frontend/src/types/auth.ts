@@ -14,10 +14,13 @@ export type Permission =
   | 'onboarding:import'
   | 'onboarding:erp_sync'
   | 'reports:export'
+  | 'analytics:view'
+  | 'analytics:manage'
   | 'system:admin';
 
 export interface User {
   id: string;
+  username: string;
   email: string;
   name: string;
   role: UserRole;
@@ -25,6 +28,7 @@ export interface User {
   emailVerified: boolean;
   authProvider?: 'local' | 'google';
   avatarUrl?: string | null;
+  googleId?: string | null;
 }
 
 export interface AuthTokens {
@@ -52,6 +56,7 @@ export interface Organization {
   businessSize: BusinessSize;
   ownerId: string;
   createdAt: string;
+  updatedAt?: string;
 }
 
 export type DatasetType = 'sales' | 'inventory' | 'customers' | 'finance';

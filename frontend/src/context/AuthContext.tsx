@@ -2,19 +2,18 @@
 
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
-import { User, UserRole, Organization, AuthTokens } from '../types/auth';
+import { User, UserRole, Organization, AuthTokens, IndustryType, BusinessSize } from '../types/auth';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api/v1';
 
 export const api = axios.create({
   baseURL: API_BASE,
-  withCredentials: true, // Crucial to send HttpOnly cookies to backend
+  withCredentials: true,
   headers: {
     'Content-Type': 'application/json'
   }
 });
 
-// Helper to extract cookie values in the browser client
 const getCookie = (name: string): string | null => {
   if (typeof document === 'undefined') return null;
   const value = `; ${document.cookie}`;
@@ -36,20 +35,30 @@ interface AuthContextType {
   user: User | null;
   tokens: AuthTokens | null;
   organization: Organization | null;
+  organizations: Organization[];
   loading: boolean;
   activeRole: UserRole | null;
-  login: (email: string, password?: string, captchaToken?: string, captchaAnswer?: string) => Promise<{ mfaRequired?: boolean; mfaTicket?: string } | void>;
+  /** Login with email OR username + password */
+  login: (identifier: string, password?: string, captchaToken?: string, captchaAnswer?: string) => Promise<{ mfaRequired?: boolean; mfaTicket?: string } | void>;
   verifyMfaLogin: (mfaTicket: string, code: string) => Promise<void>;
-  register: (email: string, password: string, name: string, role?: UserRole, captchaToken?: string, captchaAnswer?: string) => Promise<void>;
+  register: (email: string, password: string, name: string, username?: string, role?: UserRole, captchaToken?: string, captchaAnswer?: string) => Promise<void>;
+  /** Real Google OAuth — pass the credential JWT from @react-oauth/google */
+  loginWithGoogle: (googleCredential: string) => Promise<void>;
+  /** Kept for mock/fallback usage */
   loginWithGoogleMock: (email?: string, name?: string, role?: UserRole) => Promise<void>;
   logout: () => Promise<void>;
   logoutAll: () => Promise<void>;
   switchRoleForDemo: (role: UserRole) => void;
   refreshOrganization: () => Promise<void>;
+  switchOrganization: (orgId: string) => Promise<void>;
+  createOrganization: (data: { name: string; industryType: IndustryType; businessSize: BusinessSize }) => Promise<Organization>;
+  updateOrganization: (id: string, data: Partial<{ name: string; industryType: IndustryType; businessSize: BusinessSize }>) => Promise<Organization>;
+  deleteOrganization: (id: string) => Promise<void>;
   getLoginHistory: () => Promise<any[]>;
   setupMfa: () => Promise<{ secret: string; otpauthUrl: string }>;
   enableMfa: (code: string) => Promise<void>;
   disableMfa: (code: string) => Promise<void>;
+  checkUsernameAvailability: (username: string) => Promise<boolean>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -58,10 +67,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [user, setUser] = useState<User | null>(null);
   const [tokens, setTokens] = useState<AuthTokens | null>(null);
   const [organization, setOrganization] = useState<Organization | null>(null);
+  const [organizations, setOrganizations] = useState<Organization[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [activeRole, setActiveRole] = useState<UserRole | null>(null);
 
-  // Set authorization header (for legacy/fallback mechanisms)
   const setAuthHeader = (accessToken: string | null) => {
     if (accessToken) {
       api.defaults.headers.common['Authorization'] = `Bearer ${accessToken}`;
@@ -70,7 +79,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  // FR1.3: Silent Refresh Token Function
   const silentRefreshToken = useCallback(async (currentRefreshToken: string): Promise<AuthTokens | null> => {
     try {
       const res = await axios.post(`${API_BASE}/auth/refresh`, {
@@ -82,15 +90,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setTokens(newTokens);
         setAuthHeader(newTokens.accessToken);
         localStorage.setItem('bm_access_token', newTokens.accessToken);
+        localStorage.setItem('accessToken', newTokens.accessToken);
         localStorage.setItem('bm_refresh_token', newTokens.refreshToken);
         return newTokens;
       }
     } catch (err) {
-      // Clear local states on refresh failure
       setUser(null);
       setTokens(null);
       setActiveRole(null);
       localStorage.removeItem('bm_access_token');
+      localStorage.removeItem('accessToken');
       localStorage.removeItem('bm_refresh_token');
     }
     return null;
@@ -99,22 +108,38 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const fetchOrganization = useCallback(async () => {
     try {
       const res = await api.get('/organization/mine');
-      if (res.data.success && res.data.data) {
-        setOrganization(res.data.data);
+      if (res.data.success) {
+        if (res.data.data) {
+          setOrganization(res.data.data);
+        }
+        if (res.data.organizations && Array.isArray(res.data.organizations)) {
+          setOrganizations(res.data.organizations);
+        } else if (res.data.data) {
+          setOrganizations([res.data.data]);
+        }
       }
     } catch (err) {
-      // Fetch optional
+      // Demo mock fallback if in offline/mock mode
+      const storedMockOrgs = localStorage.getItem('bm_mock_orgs');
+      if (storedMockOrgs) {
+        try {
+          const parsed: Organization[] = JSON.parse(storedMockOrgs);
+          setOrganizations(parsed);
+          const activeOrgId = localStorage.getItem('bm_mock_active_org_id');
+          const found = parsed.find(o => o.id === activeOrgId) || parsed[0] || null;
+          setOrganization(found);
+        } catch (_) {}
+      }
     }
   }, []);
 
-  // Initialize auth state
+  // Init auth state from localStorage / cookies
   useEffect(() => {
     const initAuth = async () => {
       const storedAccessToken = localStorage.getItem('bm_access_token');
       const storedRefreshToken = localStorage.getItem('bm_refresh_token');
       const storedMockUser = localStorage.getItem('bm_mock_user');
 
-      // Restore mock session immediately (offline/demo mode) without hitting the backend
       if (storedAccessToken?.startsWith('mock_') && storedMockUser) {
         try {
           const mockUser: User = JSON.parse(storedMockUser);
@@ -126,14 +151,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             expiresIn: 3600
           });
         } catch (_) {
-          // Malformed mock user — clear and fall through
           localStorage.removeItem('bm_mock_user');
         }
         setLoading(false);
         return;
       }
 
-      // Attempt profile fetch using cookies first, then fallback to local token headers
       if (storedAccessToken) {
         setAuthHeader(storedAccessToken);
       }
@@ -154,7 +177,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           await fetchOrganization();
         }
       } catch (err: any) {
-        // Token expired, attempt silent renewal (FR1.3)
         if (storedRefreshToken) {
           const refreshed = await silentRefreshToken(storedRefreshToken);
           if (refreshed) {
@@ -166,9 +188,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 setActiveRole(currentUser.role);
                 await fetchOrganization();
               }
-            } catch (e) {
-              // Ignore
-            }
+            } catch (e) { /* Ignore */ }
           }
         }
       }
@@ -178,13 +198,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     initAuth();
   }, [silentRefreshToken, fetchOrganization]);
 
-  // FR1.3: Set up automatic silent renewal timer before token expiration
+  // Silent token renewal every 12 minutes
   useEffect(() => {
     const storedRefreshToken = localStorage.getItem('bm_refresh_token');
     const targetToken = tokens?.refreshToken || storedRefreshToken;
     if (!targetToken) return;
 
-    // Refresh every 12 minutes (720 seconds) before 15m expiry
     const interval = setInterval(() => {
       silentRefreshToken(targetToken);
     }, 12 * 60 * 1000);
@@ -192,7 +211,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return () => clearInterval(interval);
   }, [tokens, silentRefreshToken]);
 
-  // Axios response interceptor for automatic 401 silent retry
+  // Axios 401 interceptor for silent retry
   useEffect(() => {
     const storedRefreshToken = localStorage.getItem('bm_refresh_token');
     const targetToken = tokens?.refreshToken || storedRefreshToken;
@@ -218,16 +237,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     );
 
-    return () => {
-      api.interceptors.response.eject(interceptor);
-    };
+    return () => { api.interceptors.response.eject(interceptor); };
   }, [tokens, silentRefreshToken]);
 
-  // FR1.1: Login Action
-  const login = async (email: string, password?: string, captchaToken?: string, captchaAnswer?: string) => {
+  // ── Login (email OR username) ─────────────────────────────────────────────
+  const login = async (identifier: string, password?: string, captchaToken?: string, captchaAnswer?: string) => {
     setLoading(true);
     try {
-      const res = await api.post('/auth/login', { email, password, captchaToken, captchaAnswer });
+      const res = await api.post('/auth/login', { identifier, password, captchaToken, captchaAnswer });
       if (res.data.success) {
         if (res.data.data?.mfaRequired) {
           return { mfaRequired: true, mfaTicket: res.data.data.mfaTicket };
@@ -236,22 +253,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const { user: authedUser, tokens: newTokens } = res.data.data;
         setUser(authedUser);
         setActiveRole(authedUser.role);
-        
+
         if (newTokens) {
           setTokens(newTokens);
           setAuthHeader(newTokens.accessToken);
           localStorage.setItem('bm_access_token', newTokens.accessToken);
+          localStorage.setItem('accessToken', newTokens.accessToken);
           localStorage.setItem('bm_refresh_token', newTokens.refreshToken);
         }
         await fetchOrganization();
       }
     } catch (err: any) {
       if (!err.response || err.code === 'ERR_NETWORK' || err.message === 'Network Error') {
-        console.warn('Backend REST API unreachable. Falling back to local demo login session.');
+        console.warn('Backend unreachable — falling back to demo session.');
         const mockUser: User = {
           id: `user_login_${Date.now()}`,
-          email,
-          name: email.split('@')[0],
+          username: identifier.split('@')[0] || identifier,
+          email: identifier.includes('@') ? identifier : `${identifier}@businessmind.ai`,
+          name: identifier.split('@')[0],
           role: 'Owner',
           organizationId: null,
           emailVerified: true,
@@ -266,6 +285,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setActiveRole(mockUser.role);
         setTokens(mockTokens);
         localStorage.setItem('bm_access_token', mockTokens.accessToken);
+        localStorage.setItem('accessToken', mockTokens.accessToken);
         localStorage.setItem('bm_refresh_token', mockTokens.refreshToken);
         localStorage.setItem('bm_mock_user', JSON.stringify(mockUser));
         return;
@@ -276,7 +296,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  // Verify MFA token code on login
+  // ── Verify MFA ───────────────────────────────────────────────────────────
   const verifyMfaLogin = async (mfaTicket: string, code: string) => {
     setLoading(true);
     try {
@@ -285,11 +305,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const { user: authedUser, tokens: newTokens } = res.data.data;
         setUser(authedUser);
         setActiveRole(authedUser.role);
-
         if (newTokens) {
           setTokens(newTokens);
           setAuthHeader(newTokens.accessToken);
           localStorage.setItem('bm_access_token', newTokens.accessToken);
+          localStorage.setItem('accessToken', newTokens.accessToken);
           localStorage.setItem('bm_refresh_token', newTokens.refreshToken);
         }
         await fetchOrganization();
@@ -299,28 +319,29 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  // FR1.1: Register Action
-  const register = async (email: string, password: string, name: string, role?: UserRole, captchaToken?: string, captchaAnswer?: string) => {
+  // ── Register ─────────────────────────────────────────────────────────────
+  const register = async (email: string, password: string, name: string, username?: string, role?: UserRole, captchaToken?: string, captchaAnswer?: string) => {
     setLoading(true);
     try {
-      const res = await api.post('/auth/register', { email, password, name, role, captchaToken, captchaAnswer });
+      const res = await api.post('/auth/register', { email, password, name, username, role, captchaToken, captchaAnswer });
       if (res.data.success) {
         const { user: authedUser, tokens: newTokens } = res.data.data;
         setUser(authedUser);
         setActiveRole(authedUser.role);
-        
         if (newTokens) {
           setTokens(newTokens);
           setAuthHeader(newTokens.accessToken);
           localStorage.setItem('bm_access_token', newTokens.accessToken);
+          localStorage.setItem('accessToken', newTokens.accessToken);
           localStorage.setItem('bm_refresh_token', newTokens.refreshToken);
         }
       }
     } catch (err: any) {
       if (!err.response || err.code === 'ERR_NETWORK' || err.message === 'Network Error') {
-        console.warn('Backend REST API unreachable. Falling back to local demo registration session.');
+        const autoUsername = username || name.toLowerCase().replace(/\s+/g, '_').slice(0, 20);
         const mockUser: User = {
           id: `user_registered_${Date.now()}`,
+          username: autoUsername,
           email,
           name,
           role: role || 'Owner',
@@ -337,6 +358,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setActiveRole(mockUser.role);
         setTokens(mockTokens);
         localStorage.setItem('bm_access_token', mockTokens.accessToken);
+        localStorage.setItem('accessToken', mockTokens.accessToken);
         localStorage.setItem('bm_refresh_token', mockTokens.refreshToken);
         localStorage.setItem('bm_mock_user', JSON.stringify(mockUser));
         return;
@@ -347,7 +369,43 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  // FR1.1: Google OAuth login simulation
+  // ── Real Google OAuth (credential from @react-oauth/google) ──────────────
+  const loginWithGoogle = async (googleCredential: string) => {
+    setLoading(true);
+    try {
+      // Decode JWT payload (header.payload.sig) to get user info
+      const payloadBase64 = googleCredential.split('.')[1];
+      const payload = JSON.parse(atob(payloadBase64.replace(/-/g, '+').replace(/_/g, '/')));
+
+      const res = await api.post('/auth/google', {
+        googleId: payload.sub,
+        email: payload.email,
+        name: payload.name || payload.email,
+        avatarUrl: payload.picture || null
+      });
+
+      if (res.data.success) {
+        const { user: authedUser, tokens: newTokens } = res.data.data;
+        setUser(authedUser);
+        setActiveRole(authedUser.role);
+        if (newTokens) {
+          setTokens(newTokens);
+          setAuthHeader(newTokens.accessToken);
+          localStorage.setItem('bm_access_token', newTokens.accessToken);
+          localStorage.setItem('accessToken', newTokens.accessToken);
+          localStorage.setItem('bm_refresh_token', newTokens.refreshToken);
+        }
+        await fetchOrganization();
+      }
+    } catch (err: any) {
+      // Fallback to mock if backend unreachable
+      await loginWithGoogleMock(undefined, undefined, undefined);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // ── Google Mock (used for quick-role presets or when no client ID) ────────
   const loginWithGoogleMock = async (email?: string, name?: string, role?: UserRole) => {
     setLoading(true);
     try {
@@ -358,26 +416,28 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const res = await api.post('/auth/google', {
         googleId,
         email: targetEmail,
-        name: targetName
+        name: targetName,
+        role: role || activeRole || 'Owner'
       });
 
       if (res.data.success) {
         const { user: authedUser, tokens: newTokens } = res.data.data;
         setUser(authedUser);
         setActiveRole(role || authedUser.role);
-        
         if (newTokens) {
           setTokens(newTokens);
           setAuthHeader(newTokens.accessToken);
           localStorage.setItem('bm_access_token', newTokens.accessToken);
+          localStorage.setItem('accessToken', newTokens.accessToken);
           localStorage.setItem('bm_refresh_token', newTokens.refreshToken);
         }
         await fetchOrganization();
       }
     } catch {
-      // Backend unreachable — create a mock Google user
+      const autoUsername = (name || 'google_user').toLowerCase().replace(/\s+/g, '_').slice(0, 20);
       const mockUser: User = {
         id: `google_oauth_${Date.now()}`,
+        username: autoUsername,
         email: email || 'google.user@businessmind.ai',
         name: name || 'Google Verified User',
         role: role || 'Owner',
@@ -394,6 +454,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setActiveRole(mockUser.role);
       setTokens(mockTokens);
       localStorage.setItem('bm_access_token', mockTokens.accessToken);
+      localStorage.setItem('accessToken', mockTokens.accessToken);
       localStorage.setItem('bm_refresh_token', mockTokens.refreshToken);
       localStorage.setItem('bm_mock_user', JSON.stringify(mockUser));
     } finally {
@@ -401,93 +462,209 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  // FR1.6: Single session logout
+  // ── Logout ────────────────────────────────────────────────────────────────
   const logout = async () => {
     const storedRefreshToken = localStorage.getItem('bm_refresh_token');
     const targetToken = tokens?.refreshToken || storedRefreshToken;
-
     try {
       await api.post('/auth/logout', { refreshToken: targetToken || undefined });
-    } catch (e) {
-      // Ignore
-    } finally {
-      setUser(null);
-      setTokens(null);
-      setOrganization(null);
-      setActiveRole(null);
+    } catch (e) { /* Ignore */ } finally {
+      setUser(null); setTokens(null); setOrganization(null); setOrganizations([]); setActiveRole(null);
       setAuthHeader(null);
       localStorage.removeItem('bm_access_token');
+      localStorage.removeItem('accessToken');
       localStorage.removeItem('bm_refresh_token');
       localStorage.removeItem('bm_mock_user');
+      localStorage.removeItem('bm_mock_orgs');
+      localStorage.removeItem('bm_mock_active_org_id');
     }
   };
 
-  // FR1.6: Logout from all devices
   const logoutAll = async () => {
     try {
       await api.post('/auth/logout-all');
-    } catch (e) {
-      // Ignore
-    } finally {
-      setUser(null);
-      setTokens(null);
-      setOrganization(null);
-      setActiveRole(null);
+    } catch (e) { /* Ignore */ } finally {
+      setUser(null); setTokens(null); setOrganization(null); setOrganizations([]); setActiveRole(null);
       setAuthHeader(null);
       localStorage.removeItem('bm_access_token');
+      localStorage.removeItem('accessToken');
       localStorage.removeItem('bm_refresh_token');
       localStorage.removeItem('bm_mock_user');
+      localStorage.removeItem('bm_mock_orgs');
+      localStorage.removeItem('bm_mock_active_org_id');
     }
   };
 
-  // MFA settings management
+  // ── Multi-Organization Operations ──────────────────────────────────────────
+  const switchOrganization = async (orgId: string) => {
+    try {
+      const res = await api.post(`/organization/switch/${orgId}`);
+      if (res.data.success) {
+        setOrganization(res.data.data);
+        if (res.data.organizations && Array.isArray(res.data.organizations)) {
+          setOrganizations(res.data.organizations);
+        }
+        if (user) {
+          setUser({ ...user, organizationId: orgId });
+        }
+      }
+    } catch (err) {
+      // Mock mode fallback
+      const found = organizations.find(o => o.id === orgId);
+      if (found) {
+        setOrganization(found);
+        localStorage.setItem('bm_mock_active_org_id', orgId);
+        if (user) setUser({ ...user, organizationId: orgId });
+      }
+    }
+  };
+
+  const createOrganization = async (data: { name: string; industryType: IndustryType; businessSize: BusinessSize }): Promise<Organization> => {
+    try {
+      const res = await api.post('/organization', data);
+      if (res.data.success) {
+        const newOrg: Organization = res.data.data;
+        setOrganization(newOrg);
+        if (res.data.organizations && Array.isArray(res.data.organizations)) {
+          setOrganizations(res.data.organizations);
+        } else {
+          setOrganizations(prev => [newOrg, ...prev.filter(o => o.id !== newOrg.id)]);
+        }
+        if (user) {
+          setUser({ ...user, organizationId: newOrg.id });
+        }
+        return newOrg;
+      }
+      throw new Error(res.data.message || 'Failed to create organization');
+    } catch (err: any) {
+      if (!err.response || err.code === 'ERR_NETWORK') {
+        const mockOrg: Organization = {
+          id: `org_${Date.now()}`,
+          name: data.name,
+          industryType: data.industryType,
+          businessSize: data.businessSize,
+          ownerId: user?.id || 'demo-admin-001',
+          createdAt: new Date().toISOString()
+        };
+        const updated = [mockOrg, ...organizations.filter(o => o.id !== mockOrg.id)];
+        setOrganizations(updated);
+        setOrganization(mockOrg);
+        localStorage.setItem('bm_mock_orgs', JSON.stringify(updated));
+        localStorage.setItem('bm_mock_active_org_id', mockOrg.id);
+        if (user) setUser({ ...user, organizationId: mockOrg.id });
+        return mockOrg;
+      }
+      throw err;
+    }
+  };
+
+  const updateOrganization = async (id: string, data: Partial<{ name: string; industryType: IndustryType; businessSize: BusinessSize }>): Promise<Organization> => {
+    try {
+      const res = await api.put(`/organization/${id}`, data);
+      if (res.data.success) {
+        const updatedOrg: Organization = res.data.data;
+        if (organization?.id === id) {
+          setOrganization(updatedOrg);
+        }
+        if (res.data.organizations && Array.isArray(res.data.organizations)) {
+          setOrganizations(res.data.organizations);
+        } else {
+          setOrganizations(prev => prev.map(o => o.id === id ? updatedOrg : o));
+        }
+        return updatedOrg;
+      }
+      throw new Error(res.data.message || 'Failed to update organization');
+    } catch (err: any) {
+      if (!err.response || err.code === 'ERR_NETWORK') {
+        const updated = organizations.map(o => {
+          if (o.id === id) {
+            return {
+              ...o,
+              name: data.name ?? o.name,
+              industryType: data.industryType ?? o.industryType,
+              businessSize: data.businessSize ?? o.businessSize,
+              updatedAt: new Date().toISOString()
+            };
+          }
+          return o;
+        });
+        setOrganizations(updated);
+        const active = updated.find(o => o.id === id) || organization;
+        if (organization?.id === id) {
+          setOrganization(active || null);
+        }
+        localStorage.setItem('bm_mock_orgs', JSON.stringify(updated));
+        return active!;
+      }
+      throw err;
+    }
+  };
+
+  const deleteOrganization = async (id: string): Promise<void> => {
+    try {
+      const res = await api.delete(`/organization/${id}`);
+      if (res.data.success) {
+        const remaining: Organization[] = res.data.organizations || organizations.filter(o => o.id !== id);
+        setOrganizations(remaining);
+        const newActive = remaining.find((o: any) => o.id === res.data.activeOrganizationId) || remaining[0] || null;
+        setOrganization(newActive);
+        if (user) {
+          setUser({ ...user, organizationId: newActive?.id || null });
+        }
+      }
+    } catch (err: any) {
+      if (!err.response || err.code === 'ERR_NETWORK') {
+        const remaining = organizations.filter(o => o.id !== id);
+        setOrganizations(remaining);
+        const newActive = remaining[0] || null;
+        setOrganization(newActive);
+        localStorage.setItem('bm_mock_orgs', JSON.stringify(remaining));
+        localStorage.setItem('bm_mock_active_org_id', newActive?.id || '');
+        if (user) setUser({ ...user, organizationId: newActive?.id || null });
+        return;
+      }
+      throw err;
+    }
+  };
+
+  // ── MFA ──────────────────────────────────────────────────────────────────
   const setupMfa = async () => {
     const res = await api.post('/auth/mfa/setup');
     return res.data.data;
   };
-
-  const enableMfa = async (code: string) => {
-    await api.post('/auth/mfa/enable', { code });
-  };
-
-  const disableMfa = async (code: string) => {
-    await api.post('/auth/mfa/disable', { code });
-  };
-
-  // Login Activity History monitoring
+  const enableMfa = async (code: string) => { await api.post('/auth/mfa/enable', { code }); };
+  const disableMfa = async (code: string) => { await api.post('/auth/mfa/disable', { code }); };
   const getLoginHistory = async () => {
     const res = await api.get('/auth/login-history');
     return res.data.data;
   };
 
-  // Dynamic role switcher for testing UI layouts (FR1.4)
+  // ── Username availability check ──────────────────────────────────────────
+  const checkUsernameAvailability = async (username: string): Promise<boolean> => {
+    try {
+      const res = await api.get(`/auth/check-username/${encodeURIComponent(username)}`);
+      return res.data.available ?? false;
+    } catch {
+      return true; // assume available if check fails
+    }
+  };
+
   const switchRoleForDemo = (role: UserRole) => {
     setActiveRole(role);
-    if (user) {
-      setUser({ ...user, role });
-    }
+    if (user) setUser({ ...user, role });
   };
 
   return (
     <AuthContext.Provider
       value={{
-        user,
-        tokens,
-        organization,
-        loading,
-        activeRole,
-        login,
-        verifyMfaLogin,
-        register,
-        loginWithGoogleMock,
-        logout,
-        logoutAll,
-        switchRoleForDemo,
+        user, tokens, organization, organizations, loading, activeRole,
+        login, verifyMfaLogin, register,
+        loginWithGoogle, loginWithGoogleMock,
+        logout, logoutAll, switchRoleForDemo,
         refreshOrganization: fetchOrganization,
-        getLoginHistory,
-        setupMfa,
-        enableMfa,
-        disableMfa
+        switchOrganization, createOrganization, updateOrganization, deleteOrganization,
+        getLoginHistory, setupMfa, enableMfa, disableMfa,
+        checkUsernameAvailability
       }}
     >
       {children}

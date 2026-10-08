@@ -11,8 +11,9 @@ async function runVerificationSuite() {
 
   // Test FR1.1 & FR1.5: Register and Password Hashing
   console.log('\n[1/6] Testing FR1.1 & FR1.5: Registration & Bcrypt Hashing...');
+  const testEmail = `test.owner.${Date.now()}@apex.com`;
   const testUser = await authService.register({
-    email: 'test.owner@apex.com',
+    email: testEmail,
     password: 'SecurePassword123!',
     name: 'Test Owner',
     role: 'Owner'
@@ -22,7 +23,7 @@ async function runVerificationSuite() {
 
   // Test FR1.1 & FR1.3: Login & JWT Tokens
   console.log('\n[2/6] Testing FR1.1 & FR1.3: Login & JWT Access/Refresh Tokens...');
-  const loginRes = await authService.login('test.owner@apex.com', 'SecurePassword123!');
+  const loginRes = await authService.login(testEmail, 'SecurePassword123!');
   console.log('✅ Login successful. Access Token generated:', loginRes.tokens!.accessToken.slice(0, 20) + '...');
   console.log('✅ Refresh Token generated:', loginRes.tokens!.refreshToken.slice(0, 20) + '...');
 
@@ -41,14 +42,27 @@ async function runVerificationSuite() {
     console.log(`  - Role '${role}': ${permissions.length} permissions allowed. View Finance: ${hasPermission(role, 'finance:view')}, Upload Data: ${hasPermission(role, 'onboarding:upload')}`);
   }
 
-  // Test FR2.1: Organization Creation
-  console.log('\n[5/6] Testing FR2.1: Organization Profile Creation...');
+  // Test FR2.1: Multi-Organization Creation & Switching
+  console.log('\n[5/6] Testing FR2.1: Multi-Organization Profile Creation & Dynamic Switching...');
   const org = await orgService.createOrganization(testUser.user.id, {
     name: 'Apex Global Enterprises',
     industryType: 'healthcare',
     businessSize: '201-500'
   });
-  console.log('✅ Organization created. ID:', org.id, 'Industry:', org.industryType, 'Size:', org.businessSize);
+  console.log('✅ Organization 1 created. ID:', org.id, 'Industry:', org.industryType, 'Size:', org.businessSize);
+
+  const org2 = await orgService.createOrganization(testUser.user.id, {
+    name: 'TechNova AI Labs',
+    industryType: 'technology',
+    businessSize: '11-50'
+  });
+  console.log('✅ Organization 2 created. ID:', org2.id, 'Industry:', org2.industryType, 'Size:', org2.businessSize);
+
+  const ownerOrgs = await orgService.getOrganizationsByOwner(testUser.user.id);
+  console.log(`✅ Single Admin has ${ownerOrgs.length} managed organizations: [${ownerOrgs.map(o => o.name).join(', ')}]`);
+
+  const switchResult = await orgService.switchActiveOrganization(testUser.user.id, org.id);
+  console.log(`✅ Switched active workspace to: ${switchResult.organization.name}`);
 
   // Test FR2.2, FR2.3, FR2.4, FR2.5: Data Onboarding Pipeline & Actionable Error Reporting
   console.log('\n[6/6] Testing FR2.2-FR2.5: CSV File Upload Validation & Preview...');

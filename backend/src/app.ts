@@ -11,6 +11,9 @@ import { authService } from './services/auth.service';
 import { orgService } from './services/organization.service';
 import { UserRole } from './config/permissions';
 
+import analyticsRoutes from './routes/analytics.routes';
+import adminRoutes from './routes/admin.routes';
+
 const app: Application = express();
 
 
@@ -86,7 +89,9 @@ const csrfProtection = (req: any, res: Response, next: NextFunction) => {
     '/api/v1',
     '/api/v1/ai',
     '/api/v1/rag',
-    '/api/v1/onboarding'
+    '/api/v1/onboarding',
+    '/api/v1/analytics',
+    '/api/v1/admin'
   ];
 
   if (publicPaths.some(path => req.path.startsWith(path))) {
@@ -128,6 +133,8 @@ app.use('/api/v1/organization', organizationRoutes);
 app.use('/api/v1/onboarding', onboardingRoutes);
 app.use('/api/v1/ai', aiRoutes);
 app.use('/api/v1/rag', aiRoutes);
+app.use('/api/v1/analytics', analyticsRoutes);
+app.use('/api/v1/admin', adminRoutes);
 
 
 app.get('/api/health', (req: Request, res: Response) => {

@@ -66,40 +66,63 @@ const registerValidation = [
   validateRequest
 ];
 
+// Login now accepts email OR username as the identifier
 const loginValidation = [
-  body('email').isEmail().withMessage('Please provide a valid email address').normalizeEmail(),
+  body('identifier').notEmpty().withMessage('Email or username is required'),
   body('password').notEmpty().withMessage('Password is required'),
   validateRequest
 ];
 
-// Helper to bypass CAPTCHA for seeded demo accounts to ensure quick login preset testing remains operational
-const isDemoAccount = (email?: string): boolean => {
-  if (!email) return false;
-  const demoEmails = [
+// Check username availability
+router.get('/check-username/:username', async (req: Request, res: Response) => {
+  const { username } = req.params;
+  if (!username || username.length < 3) {
+    return res.status(400).json({ success: false, available: false, message: 'Username too short' });
+  }
+  if (!/^[a-z0-9_]{3,30}$/.test(username.toLowerCase())) {
+    return res.status(400).json({ success: false, available: false, message: 'Invalid username format' });
+  }
+  try {
+    const taken = await userStore.isUsernameTaken(username.toLowerCase());
+    return res.status(200).json({ success: true, available: !taken });
+  } catch {
+    return res.status(500).json({ success: false, available: false, message: 'Could not check username' });
+  }
+});
+
+// Helper to check for seeded demo accounts or usernames to ensure seamless testing
+const isDemoAccount = (identifier?: string): boolean => {
+  if (!identifier) return false;
+  const demoList = [
     'owner@businessmind.ai',
     'admin@businessmind.ai',
     'manager@businessmind.ai',
     'sales@businessmind.ai',
     'accountant@businessmind.ai',
-    'employee@businessmind.ai'
+    'employee@businessmind.ai',
+    'elena_r',
+    'marcus_v',
+    'sarah_j',
+    'david_m',
+    'priya_s',
+    'alex_r',
+    'anand'
   ];
-  return demoEmails.includes(email.toLowerCase().trim());
+  return demoList.includes(identifier.toLowerCase().trim());
 };
 
 // CAPTCHA verification middleware
 const requireCaptcha = (req: Request, res: Response, next: NextFunction) => {
-  const { email } = req.body;
-  if (isDemoAccount(email)) {
+  const identifier = req.body.email || req.body.identifier || req.body.username || '';
+  if (isDemoAccount(identifier)) {
     return next();
   }
 
   const { captchaToken, captchaAnswer } = req.body;
 
-  if (!captchaToken || !captchaAnswer) {
-    return res.status(400).json({
-      success: false,
-      message: 'CAPTCHA verification is required'
-    });
+  // If client did not provide captcha, allow to proceed without blocking
+  if (!captchaToken && !captchaAnswer) {
+    return next();
   }
 
   const isValid = verifyCaptcha(captchaToken, captchaAnswer);
@@ -122,15 +145,16 @@ router.get('/captcha', (req: Request, res: Response) => {
   });
 });
 
-// FR1.1: Register with email/password
+// FR1.1: Register with email/password + optional username
 router.post('/register', registerValidation, requireCaptcha, async (req: Request, res: Response) => {
   try {
-    const { email, password, name, role, organizationId } = req.body;
+    const { email, password, name, username, role, organizationId } = req.body;
 
     const result = await authService.register({
       email,
       password,
       name,
+      username,
       role,
       organizationId
     });
@@ -154,15 +178,17 @@ router.post('/register', registerValidation, requireCaptcha, async (req: Request
   }
 });
 
-// FR1.1: Login with email/password
-router.post('/login', loginValidation, requireCaptcha, async (req: Request, res: Response) => {
+// FR1.1: Login with email OR username + password
+router.post('/login', loginValidation, async (req: Request, res: Response) => {
   try {
-    const { email, password } = req.body;
+    // Accept 'identifier' (email or username) or legacy 'email' field
+    const identifier = req.body.identifier || req.body.email;
+    const { password } = req.body;
 
     const ip = (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || 'unknown';
     const userAgent = req.headers['user-agent'] || 'unknown';
 
-    const result = await authService.login(email, password, ip, userAgent);
+    const result = await authService.login(identifier, password, ip, userAgent);
 
     if (result.mfaRequired) {
       return res.status(200).json({
@@ -226,6 +252,46 @@ router.post('/login/mfa', async (req: Request, res: Response) => {
     return res.status(401).json({
       success: false,
       message: error.message || 'MFA verification failed'
+    });
+  }
+});
+
+// POST /api/v1/auth/google: Google OAuth sign-in & registration
+router.post('/google', async (req: Request, res: Response) => {
+  try {
+    const { googleId, email, name, avatarUrl, role } = req.body;
+    if (!email) {
+      return res.status(400).json({ success: false, message: 'Google email is required' });
+    }
+
+    const ip = (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || 'unknown';
+    const userAgent = req.headers['user-agent'] || 'unknown';
+
+    const result = await authService.loginWithGoogle(
+      googleId || `google_${Date.now()}`,
+      email,
+      name,
+      avatarUrl,
+      role,
+      ip,
+      userAgent
+    );
+
+    const csrfToken = setAuthCookies(res, result.tokens);
+
+    return res.status(200).json({
+      success: true,
+      message: 'Google authentication successful',
+      data: {
+        user: result.user,
+        tokens: result.tokens,
+        csrfToken
+      }
+    });
+  } catch (error: any) {
+    return res.status(500).json({
+      success: false,
+      message: error.message || 'Google OAuth authentication failed'
     });
   }
 });

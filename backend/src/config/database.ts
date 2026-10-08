@@ -55,6 +55,12 @@ class DatabaseConfig {
     return this.pool;
   }
 
+  public async getConnection(): Promise<mysql.PoolConnection> {
+    if (!this.pool) this.initPool();
+    if (!this.pool) throw new Error('MySQL pool not initialized');
+    return await this.pool.getConnection();
+  }
+
   public async query(sql: string, params: any[] = []): Promise<any> {
     if (!this.pool) {
       this.initPool();

@@ -1,6 +1,7 @@
 -- ============================================================
--- BusinessMind AI — Complete MySQL Database Schema
+-- BusinessMind AI — Complete MySQL Database Schema v2
 -- Database Name: businessmind_db
+-- Updated: 2026 — Added username, auth fields, demo seeds
 -- ============================================================
 
 CREATE DATABASE IF NOT EXISTS businessmind_db;
@@ -9,11 +10,26 @@ USE businessmind_db;
 -- 1. Users Table (Authentication & RBAC Roles)
 CREATE TABLE IF NOT EXISTS users (
     id VARCHAR(36) PRIMARY KEY,
+    username VARCHAR(50) NOT NULL UNIQUE,
     name VARCHAR(255) NOT NULL,
     email VARCHAR(255) NOT NULL UNIQUE,
-    password_hash VARCHAR(255) NOT NULL,
+    password_hash VARCHAR(255),
     role ENUM('Owner', 'Admin', 'Manager', 'Sales Person', 'Accountant', 'Employee') NOT NULL DEFAULT 'Employee',
-    organization_id VARCHAR(36),
+    organization_id VARCHAR(36) NULL,
+    auth_provider ENUM('local', 'google') NOT NULL DEFAULT 'local',
+    google_id VARCHAR(255) NULL,
+    avatar_url TEXT NULL,
+    email_verified BOOLEAN DEFAULT FALSE,
+    email_verification_token VARCHAR(255) NULL,
+    password_reset_token VARCHAR(255) NULL,
+    password_reset_expires TIMESTAMP NULL,
+    refresh_tokens JSON,
+    failed_login_attempts INT DEFAULT 0,
+    lockout_until TIMESTAMP NULL,
+    mfa_enabled BOOLEAN DEFAULT FALSE,
+    mfa_secret VARCHAR(255) NULL,
+    login_history JSON,
+    last_active_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 );
@@ -27,7 +43,6 @@ CREATE TABLE IF NOT EXISTS organizations (
     owner_id VARCHAR(36),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (owner_id) REFERENCES users(id) ON DELETE SET NULL
-    
 );
 
 -- 3. Sales & Revenue Table (Structured Business Aggregate)
@@ -69,9 +84,72 @@ CREATE TABLE IF NOT EXISTS ai_chat_history (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+-- ============================================================
+-- Seed 6 RBAC Demo Accounts
+-- Passwords are bcrypt hashed 'Password123!'
+-- Hash: $2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LqTBMvKbvNS
+-- ============================================================
+INSERT INTO users (
+    id, username, name, email, password_hash, role,
+    auth_provider, email_verified, refresh_tokens, login_history, failed_login_attempts
+) VALUES
+(
+    'demo-owner-001',
+    'owner_elena',
+    'Elena Rostova',
+    'owner@businessmind.ai',
+    '$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LqTBMvKbvNS',
+    'Owner', 'local', TRUE, '[]', '[]', 0
+),
+(
+    'demo-admin-001',
+    'admin_marcus',
+    'Marcus Vance',
+    'admin@businessmind.ai',
+    '$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LqTBMvKbvNS',
+    'Admin', 'local', TRUE, '[]', '[]', 0
+),
+(
+    'demo-manager-001',
+    'manager_sarah',
+    'Sarah Jenkins',
+    'manager@businessmind.ai',
+    '$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LqTBMvKbvNS',
+    'Manager', 'local', TRUE, '[]', '[]', 0
+),
+(
+    'demo-sales-001',
+    'sales_david',
+    'David Miller',
+    'sales@businessmind.ai',
+    '$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LqTBMvKbvNS',
+    'Sales Person', 'local', TRUE, '[]', '[]', 0
+),
+(
+    'demo-accountant-001',
+    'accountant_priya',
+    'Priya Sharma',
+    'accountant@businessmind.ai',
+    '$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LqTBMvKbvNS',
+    'Accountant', 'local', TRUE, '[]', '[]', 0
+),
+(
+    'demo-employee-001',
+    'employee_alex',
+    'Alex Rivera',
+    'employee@businessmind.ai',
+    '$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LqTBMvKbvNS',
+    'Employee', 'local', TRUE, '[]', '[]', 0
+)
+ON DUPLICATE KEY UPDATE
+    name = VALUES(name),
+    password_hash = VALUES(password_hash),
+    role = VALUES(role),
+    email_verified = VALUES(email_verified);
+
 -- Pre-seed Initial Sample Sales Data for Instant Dashboard BI
 INSERT INTO sales_records (id, transaction_date, product_name, category, quantity, unit_price, revenue, cost, customer_region)
-VALUES 
+VALUES
 (UUID(), '2025-07-01', 'Enterprise Cloud License', 'Software', 10, 150000.00, 1500000.00, 950000.00, 'North America'),
 (UUID(), '2025-07-15', 'Retail POS Terminal Unit', 'Hardware', 25, 45000.00, 1125000.00, 800000.00, 'APAC'),
 (UUID(), '2025-08-01', 'B2B Consulting Package', 'Services', 5, 200000.00, 1000000.00, 600000.00, 'EMEA'),

@@ -24,6 +24,8 @@ export const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     'onboarding:import',
     'onboarding:erp_sync',
     'reports:export',
+    'analytics:view',
+    'analytics:manage',
     'system:admin'
   ],
   Admin: [
@@ -39,6 +41,8 @@ export const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     'onboarding:import',
     'onboarding:erp_sync',
     'reports:export',
+    'analytics:view',
+    'analytics:manage',
     'system:admin'
   ],
   Manager: [
@@ -52,14 +56,17 @@ export const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     'onboarding:upload',
     'onboarding:import',
     'onboarding:erp_sync',
-    'reports:export'
+    'reports:export',
+    'analytics:view',
+    'analytics:manage'
   ],
   'Sales Person': [
     'dashboard:view',
     'sales:view',
     'sales:manage',
     'inventory:view',
-    'reports:export'
+    'reports:export',
+    'analytics:view'
   ],
   Accountant: [
     'dashboard:view',
@@ -68,12 +75,15 @@ export const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     'sales:view',
     'reports:export',
     'onboarding:upload',
-    'onboarding:import'
+    'onboarding:import',
+    'analytics:view',
+    'analytics:manage'
   ],
   Employee: [
     'dashboard:view',
     'sales:view',
-    'inventory:view'
+    'inventory:view',
+    'analytics:view'
   ]
 };
 
