@@ -82,9 +82,9 @@ flowchart TD
 
     subgraph Backend ["Backend API Layer (Port 5000)"]
         Express["Express.js (TypeScript)"]
-        AuthModule["Auth & RBAC (JWT + MFA + Captcha)"]
+        AuthModule["Auth & RBAC (JWT, MFA, Captcha)"]
         AnalyticsSvc["Financial Analytics Engine (P&L, Margins)"]
-        DataPipeline["Batch ETL Pipeline (CSV/XLSX Parser)"]
+        DataPipeline["Batch ETL Pipeline (CSV and XLSX Parser)"]
         VoiceHandler["Voice Synthesis & Speech Router"]
         Security["Helmet + RateLimiter + Double-Submit CSRF"]
     end
@@ -113,25 +113,37 @@ flowchart TD
     end
 
     User --> NextApp
-    NextApp --> UI_Dash & UI_Voice & UI_RAG & UI_Analytics & UI_Domains
-    NextApp -->|REST / JSON| Express
+    NextApp --> UI_Dash
+    NextApp --> UI_Voice
+    NextApp --> UI_RAG
+    NextApp --> UI_Analytics
+    NextApp --> UI_Domains
+    NextApp -->|"REST / JSON"| Express
 
-    Express --> AuthModule & AnalyticsSvc & DataPipeline & VoiceHandler & Security
-    DataPipeline -->|Batch Insert (100 rows/chunk)| MySQL
-    AnalyticsSvc -->|Live SQL Queries| MySQL
-    Express -->|Read / Write| MySQL
+    Express --> AuthModule
+    Express --> AnalyticsSvc
+    Express --> DataPipeline
+    Express --> VoiceHandler
+    Express --> Security
 
-    Express -->|Forward Query & Trigger Sync| FastAPI
+    DataPipeline -->|"Batch Insert: 100 rows per chunk"| MySQL
+    AnalyticsSvc -->|"Live SQL Queries"| MySQL
+    Express -->|"Read / Write"| MySQL
+
+    Express -->|"Forward Query and Trigger Sync"| FastAPI
     FastAPI --> Router
-    Router -->|Live SQL Metrics| MySQL
-    Router -->|Vector Context Retrieval| FAISS_Engine
-    Router -->|Data Aggregates & Trends| Analytics_Engine
+    Router -->|"Live SQL Metrics"| MySQL
+    Router -->|"Vector Context Retrieval"| FAISS_Engine
+    Router -->|"Data Aggregates and Trends"| Analytics_Engine
 
-    FAISS_Engine & Analytics_Engine -->|Grounded Context Prompt| Ollama
-    Ollama -.->|Automatic Fallback / User Toggle| CloudLLM
-    CloudLLM -.->|Offline Fallback| FallbackSynthesizer
-    Ollama & CloudLLM -->|Executive 4-Part Response| FastAPI
-    FastAPI --> Express --> NextApp
+    FAISS_Engine -->|"Grounded Context Prompt"| Ollama
+    Analytics_Engine -->|"Aggregated Metrics Prompt"| Ollama
+    Ollama -.->|"Automatic Fallback or User Toggle"| CloudLLM
+    CloudLLM -.->|"Offline Fallback"| FallbackSynthesizer
+    Ollama -->|"Executive 4-Part Response"| FastAPI
+    CloudLLM -->|"Executive 4-Part Response"| FastAPI
+    FastAPI --> Express
+    Express --> NextApp
 ```
 
 ---
