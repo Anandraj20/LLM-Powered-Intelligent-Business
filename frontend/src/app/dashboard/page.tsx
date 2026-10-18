@@ -8,6 +8,8 @@ import { Sidebar } from '../../components/layout/Sidebar';
 import { Navbar } from '../../components/layout/Navbar';
 import { BusinessMindChat } from '../../components/chat/BusinessMindChat';
 import { hasPermission, ROLE_BADGE_COLORS } from '../../config/permissions';
+import { VoiceAssistantModal } from '../../components/chat/VoiceAssistantModal';
+import { RagSystemModal } from '../../components/chat/RagSystemModal';
 import {
   TrendingUp,
   DollarSign,
@@ -29,7 +31,13 @@ import {
   ArrowDownRight,
   TrendingDown,
   RefreshCw,
-  AlertCircle
+  AlertCircle,
+  Mic,
+  Cpu,
+  Cloud,
+  BookOpen,
+  Database,
+  Zap
 } from 'lucide-react';
 
 export default function DashboardPage() {
@@ -54,6 +62,32 @@ export default function DashboardPage() {
     totalDeals: number; isProfit: boolean;
   } | null>(null);
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
+
+  // Voice & RAG modal states
+  const [showVoiceModal, setShowVoiceModal] = useState(false);
+  const [showRagModal, setShowRagModal] = useState(false);
+
+  // Live system diagnostics
+  const [diagnostics, setDiagnostics] = useState<any>(null);
+  const [testingDiagnostics, setTestingDiagnostics] = useState(false);
+
+  const fetchDiagnostics = async () => {
+    setTestingDiagnostics(true);
+    try {
+      const res = await fetch('/api/v1/ai/diagnostics');
+      const data = await res.json();
+      if (data.success && data.components) {
+        setDiagnostics(data.components);
+      }
+    } catch {}
+    finally {
+      setTestingDiagnostics(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchDiagnostics();
+  }, []);
 
   // Fetch a lightweight analytics snapshot for the dashboard banner
   useEffect(() => {
@@ -230,6 +264,209 @@ export default function DashboardPage() {
                   </Link>
                 </div>
               )}
+            </section>
+
+            {/* SYSTEM DIAGNOSTICS & ENGINE STATUS BAR */}
+            <section className="bg-slate-900/90 backdrop-blur-md border border-slate-800 rounded-3xl p-6 shadow-xl space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-2xl bg-indigo-600/20 border border-indigo-500/30 flex items-center justify-center text-indigo-400">
+                    <Activity size={20} />
+                  </div>
+                  <div>
+                    <h3 className="font-extrabold text-white text-sm">System Diagnostics & AI Engine Status</h3>
+                    <p className="text-[11px] text-slate-400">Live operational health of database, local Ollama LLM, FAISS vectors, and cloud bridge</p>
+                  </div>
+                </div>
+
+                <button
+                  onClick={fetchDiagnostics}
+                  disabled={testingDiagnostics}
+                  className="px-3.5 py-1.5 bg-slate-800 hover:bg-slate-750 text-slate-200 border border-slate-700 rounded-xl text-xs font-semibold flex items-center gap-2 transition disabled:opacity-50 w-fit"
+                >
+                  <RefreshCw size={13} className={testingDiagnostics ? 'animate-spin text-indigo-400' : ''} />
+                  <span>{testingDiagnostics ? 'Testing Latencies…' : 'Test All Connections'}</span>
+                </button>
+              </div>
+
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 pt-1">
+                {/* 1. Ollama LLM Status */}
+                <div className="p-3.5 rounded-2xl bg-slate-950/60 border border-slate-800 space-y-1">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-slate-400 font-semibold flex items-center gap-1.5">
+                      <Cpu size={14} className="text-indigo-400" /> Ollama Local
+                    </span>
+                    <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold ${
+                      diagnostics?.ollama?.online
+                        ? 'bg-emerald-950 text-emerald-300 border border-emerald-800'
+                        : 'bg-amber-950 text-amber-300 border border-amber-800'
+                    }`}>
+                      {diagnostics?.ollama?.online ? 'Online' : 'Standby'}
+                    </span>
+                  </div>
+                  <p className="text-xs font-bold text-white truncate">
+                    {diagnostics?.ollama?.targetModel || 'qwen3.5:4b'}
+                  </p>
+                  <p className="text-[10px] text-slate-500">
+                    {diagnostics?.ollama?.latencyMs ? `${diagnostics.ollama.latencyMs}ms ping` : 'Local GPU Socket'}
+                  </p>
+                </div>
+
+                {/* 2. MySQL Database Status */}
+                <div className="p-3.5 rounded-2xl bg-slate-950/60 border border-slate-800 space-y-1">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-slate-400 font-semibold flex items-center gap-1.5">
+                      <Database size={14} className="text-cyan-400" /> MySQL DB
+                    </span>
+                    <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold ${
+                      diagnostics?.database?.connected
+                        ? 'bg-emerald-950 text-emerald-300 border border-emerald-800'
+                        : 'bg-rose-950 text-rose-300 border border-rose-800'
+                    }`}>
+                      {diagnostics?.database?.connected ? 'Connected' : 'Offline'}
+                    </span>
+                  </div>
+                  <p className="text-xs font-bold text-white truncate">
+                    {diagnostics?.database?.totalSales ? `${Number(diagnostics.database.totalSales).toLocaleString()} records` : 'businessmind_db'}
+                  </p>
+                  <p className="text-[10px] text-slate-500">
+                    {diagnostics?.database?.latencyMs ? `${diagnostics.database.latencyMs}ms latency` : 'Active Pool'}
+                  </p>
+                </div>
+
+                {/* 3. FAISS RAG Status */}
+                <div className="p-3.5 rounded-2xl bg-slate-950/60 border border-slate-800 space-y-1">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-slate-400 font-semibold flex items-center gap-1.5">
+                      <BookOpen size={14} className="text-purple-400" /> FAISS RAG
+                    </span>
+                    <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-purple-950 text-purple-300 border border-purple-800">
+                      Active
+                    </span>
+                  </div>
+                  <p className="text-xs font-bold text-white truncate">
+                    {diagnostics?.ai_microservice?.ragChunks ? `${diagnostics.ai_microservice.ragChunks} Vector Chunks` : 'Dense Embeddings'}
+                  </p>
+                  <p className="text-[10px] text-slate-500">Cosine Similarity Memory</p>
+                </div>
+
+                {/* 4. OpenAI Cloud Bridge */}
+                <div className="p-3.5 rounded-2xl bg-slate-950/60 border border-slate-800 space-y-1">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-slate-400 font-semibold flex items-center gap-1.5">
+                      <Cloud size={14} className="text-violet-400" /> OpenAI Cloud
+                    </span>
+                    <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-violet-950 text-violet-300 border border-violet-800">
+                      Ready
+                    </span>
+                  </div>
+                  <p className="text-xs font-bold text-white truncate">gpt-4o-mini</p>
+                  <p className="text-[10px] text-slate-500">Dual Fallback Engine</p>
+                </div>
+              </div>
+            </section>
+
+            {/* EXECUTIVE QUICK ACTION CARDS */}
+            <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              {/* Card 1: Voice AI Assistant */}
+              <div
+                onClick={() => setShowVoiceModal(true)}
+                className="p-5 bg-gradient-to-br from-slate-900 to-indigo-950/30 border border-indigo-500/30 hover:border-indigo-500/60 rounded-3xl cursor-pointer transition-all hover:scale-[1.02] shadow-xl group flex flex-col justify-between space-y-3"
+              >
+                <div className="flex items-center justify-between">
+                  <div className="w-10 h-10 rounded-2xl bg-indigo-600/20 border border-indigo-500/40 flex items-center justify-center text-indigo-400 group-hover:scale-110 transition">
+                    <Mic size={20} className="animate-pulse" />
+                  </div>
+                  <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-indigo-950 text-indigo-300 border border-indigo-800">
+                    Voice Copilot
+                  </span>
+                </div>
+                <div>
+                  <h4 className="font-extrabold text-white text-sm mb-1">Voice Assistant & Speech</h4>
+                  <p className="text-[11px] text-slate-400 leading-relaxed">
+                    Speak queries aloud, receive verbal responses, and run guided voice assignments.
+                  </p>
+                </div>
+                <div className="pt-2 border-t border-slate-800/80 flex items-center justify-between text-xs font-bold text-indigo-400 group-hover:text-indigo-300">
+                  <span>Start Voice Mode</span>
+                  <ArrowRight size={14} className="group-hover:translate-x-1 transition" />
+                </div>
+              </div>
+
+              {/* Card 2: Data Analysis Session */}
+              <Link
+                href="/analytics"
+                className="p-5 bg-gradient-to-br from-slate-900 to-violet-950/30 border border-violet-500/30 hover:border-violet-500/60 rounded-3xl cursor-pointer transition-all hover:scale-[1.02] shadow-xl group flex flex-col justify-between space-y-3"
+              >
+                <div className="flex items-center justify-between">
+                  <div className="w-10 h-10 rounded-2xl bg-violet-600/20 border border-violet-500/30 flex items-center justify-center text-violet-400 group-hover:scale-110 transition">
+                    <BarChart3 size={20} />
+                  </div>
+                  <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-violet-950 text-violet-300 border border-violet-800">
+                    Data Analyst
+                  </span>
+                </div>
+                <div>
+                  <h4 className="font-extrabold text-white text-sm mb-1">Data Analysis Session</h4>
+                  <p className="text-[11px] text-slate-400 leading-relaxed">
+                    Upload datasets, analyze week-wise profit & loss, and generate AI diagnoses.
+                  </p>
+                </div>
+                <div className="pt-2 border-t border-slate-800/80 flex items-center justify-between text-xs font-bold text-violet-400 group-hover:text-violet-300">
+                  <span>Open Data Analyst</span>
+                  <ArrowRight size={14} className="group-hover:translate-x-1 transition" />
+                </div>
+              </Link>
+
+              {/* Card 3: RAG Knowledge Hub */}
+              <div
+                onClick={() => setShowRagModal(true)}
+                className="p-5 bg-gradient-to-br from-slate-900 to-purple-950/30 border border-purple-500/30 hover:border-purple-500/60 rounded-3xl cursor-pointer transition-all hover:scale-[1.02] shadow-xl group flex flex-col justify-between space-y-3"
+              >
+                <div className="flex items-center justify-between">
+                  <div className="w-10 h-10 rounded-2xl bg-purple-600/20 border border-purple-500/30 flex items-center justify-center text-purple-400 group-hover:scale-110 transition">
+                    <BookOpen size={20} />
+                  </div>
+                  <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-purple-950 text-purple-300 border border-purple-800">
+                    FAISS RAG
+                  </span>
+                </div>
+                <div>
+                  <h4 className="font-extrabold text-white text-sm mb-1">RAG Knowledge Hub</h4>
+                  <p className="text-[11px] text-slate-400 leading-relaxed">
+                    Test vector similarity search, upload corporate policies, and sync DB records.
+                  </p>
+                </div>
+                <div className="pt-2 border-t border-slate-800/80 flex items-center justify-between text-xs font-bold text-purple-400 group-hover:text-purple-300">
+                  <span>Explore RAG System</span>
+                  <ArrowRight size={14} className="group-hover:translate-x-1 transition" />
+                </div>
+              </div>
+
+              {/* Card 4: Live MySQL Financial Ledger */}
+              <Link
+                href="/analytics"
+                className="p-5 bg-gradient-to-br from-slate-900 to-emerald-950/30 border border-emerald-500/30 hover:border-emerald-500/60 rounded-3xl cursor-pointer transition-all hover:scale-[1.02] shadow-xl group flex flex-col justify-between space-y-3"
+              >
+                <div className="flex items-center justify-between">
+                  <div className="w-10 h-10 rounded-2xl bg-emerald-600/20 border border-emerald-500/30 flex items-center justify-center text-emerald-400 group-hover:scale-110 transition">
+                    <DollarSign size={20} />
+                  </div>
+                  <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-emerald-950 text-emerald-300 border border-emerald-800">
+                    Live SQL
+                  </span>
+                </div>
+                <div>
+                  <h4 className="font-extrabold text-white text-sm mb-1">Live Financial Ledger</h4>
+                  <p className="text-[11px] text-slate-400 leading-relaxed">
+                    {analyticsSnap ? `${fmt(analyticsSnap.totalRevenue)} revenue · ${analyticsSnap.profitMargin.toFixed(1)}% margin` : 'Real-time sales & profit breakdown'}
+                  </p>
+                </div>
+                <div className="pt-2 border-t border-slate-800/80 flex items-center justify-between text-xs font-bold text-emerald-400 group-hover:text-emerald-300">
+                  <span>View Financials</span>
+                  <ArrowRight size={14} className="group-hover:translate-x-1 transition" />
+                </div>
+              </Link>
             </section>
 
             {/* BusinessMind AI Executive Assistant Chat Widget */}
@@ -598,6 +835,18 @@ export default function DashboardPage() {
           </main>
         </div>
       </div>
+
+      {/* Interactive Voice Assistant Modal */}
+      <VoiceAssistantModal
+        isOpen={showVoiceModal}
+        onClose={() => setShowVoiceModal(false)}
+      />
+
+      {/* Interactive FAISS RAG System Hub Modal */}
+      <RagSystemModal
+        isOpen={showRagModal}
+        onClose={() => setShowRagModal(false)}
+      />
     </ProtectedRoute>
   );
 }

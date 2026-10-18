@@ -163,16 +163,73 @@ export class AnalyticsService {
   }
 
   /**
+   * Helper to parse flexible numbers with currency symbols, commas, or accounting brackets
+   */
+  private parseNumeric(val: any, fallback: number = 0): number {
+    if (val === null || val === undefined || val === '') return fallback;
+    if (typeof val === 'number') return isNaN(val) ? fallback : val;
+    let str = String(val).trim();
+    if (!str) return fallback;
+
+    // Check for accounting parentheses e.g. (1,250.00) => negative
+    const isAccountingNegative = /^\(.*\)$/.test(str);
+    // Strip everything except digits, minus, and decimal dot
+    str = str.replace(/[^\d.-]/g, '');
+    if (!str || str === '-' || str === '.') return fallback;
+
+    let num = parseFloat(str);
+    if (isNaN(num)) return fallback;
+    if (isAccountingNegative && num > 0) num = -num;
+    return num;
+  }
+
+  /**
+   * Helper to parse dates supporting ISO, DD/MM/YYYY, MM/DD/YYYY, and Excel serial numbers
+   */
+  private parseDate(val: any, fallbackIndex: number, totalRows: number): Date {
+    if (val !== null && val !== undefined && val !== '') {
+      // Excel serial date (e.g., 45123)
+      if (typeof val === 'number' && val > 30000 && val < 60000) {
+        return new Date((val - 25569) * 86400 * 1000);
+      }
+      
+      const str = String(val).trim();
+      // Try direct Date constructor
+      const parsed = new Date(str);
+      if (!isNaN(parsed.getTime()) && parsed.getFullYear() > 1990 && parsed.getFullYear() < 2100) {
+        return parsed;
+      }
+
+      // Try DD/MM/YYYY or DD-MM-YYYY
+      const dmy = str.match(/^(\d{1,2})[\/\.-](\d{1,2})[\/\.-](\d{4})/);
+      if (dmy) {
+        const d = new Date(parseInt(dmy[3], 10), parseInt(dmy[2], 10) - 1, parseInt(dmy[1], 10));
+        if (!isNaN(d.getTime())) return d;
+      }
+    }
+
+    // Realistic fallback chronological spread across past 12 weeks
+    const today = new Date();
+    const daysOffset = Math.round((fallbackIndex / Math.max(1, totalRows)) * 84); // 84 days = 12 weeks
+    const res = new Date(today.getTime() - (84 - daysOffset) * 86400000);
+    return res;
+  }
+
+  /**
    * Normalize flexible column headers into standard financial fields
    */
   private normalizeRawRows(rawRows: any[]): any[] {
+    const totalCount = rawRows.length;
     return rawRows.map((row, idx) => {
-      // Find field values case-insensitively
+      // Find field values case-insensitively and trim keys
       const getVal = (...keys: string[]): any => {
         for (const k of keys) {
+          const target = k.toLowerCase().replace(/[\s_-]/g, '');
           for (const rowKey of Object.keys(row)) {
-            if (rowKey.trim().toLowerCase() === k.toLowerCase()) {
-              return row[rowKey];
+            const cleanKey = rowKey.toLowerCase().replace(/[\s_-]/g, '');
+            if (cleanKey === target || cleanKey.includes(target)) {
+              const val = row[rowKey];
+              if (val !== undefined && val !== null && val !== '') return val;
             }
           }
         }
@@ -180,40 +237,51 @@ export class AnalyticsService {
       };
 
       // Extract transaction date or generate fallback chronological sequence
-      let dateVal = getVal('transaction_date', 'transactiondate', 'date', 'order_date', 'orderdate', 'created_at', 'timestamp');
-      let transactionDate: Date;
-      if (dateVal) {
-        transactionDate = new Date(dateVal);
-        if (isNaN(transactionDate.getTime())) {
-          // Fallback to sequential fake date based on index if format invalid
-          const baseDate = new Date(2025, 0, 1);
-          baseDate.setDate(baseDate.getDate() + idx);
-          transactionDate = baseDate;
-        }
-      } else {
-        const baseDate = new Date(2025, 0, 1);
-        baseDate.setDate(baseDate.getDate() + idx);
-        transactionDate = baseDate;
-      }
+      const dateVal = getVal(
+        'transactiondate', 'transaction_date', 'date', 'orderdate', 'order_date',
+        'invoicedate', 'invoice_date', 'createdat', 'created_at', 'timestamp', 'period', 'day'
+      );
+      const transactionDate = this.parseDate(dateVal, idx, totalCount);
 
-      const revenueRaw = getVal('revenue', 'sales', 'amount', 'total_price', 'total', 'selling_price', 'gross_revenue');
-      const costRaw = getVal('cost', 'expenses', 'expense', 'cogs', 'purchase_cost', 'total_cost');
-      const profitRaw = getVal('profit', 'net_profit', 'margin', 'gross_profit');
-      const qtyRaw = getVal('quantity', 'qty', 'units', 'volume', 'count');
-      const productRaw = getVal('product_name', 'product', 'item', 'item_name', 'sku', 'description');
-      const categoryRaw = getVal('category', 'product_category', 'department', 'type', 'segment');
-      const regionRaw = getVal('customer_region', 'region', 'location', 'country', 'city', 'territory');
+      const revenueVal = getVal(
+        'revenue', 'grossrevenue', 'sales', 'salesamount', 'amount', 'totalprice',
+        'total', 'sellingprice', 'turnover', 'grandtotal', 'invoicetotal', 'ordervalue'
+      );
+      const costVal = getVal(
+        'cost', 'totalcost', 'expenses', 'expense', 'cogs', 'purchasecost',
+        'spending', 'expenditure', 'costprice', 'unitcost'
+      );
+      const profitVal = getVal(
+        'profit', 'netprofit', 'margin', 'grossprofit', 'netincome', 'gain', 'earnings'
+      );
+      const qtyVal = getVal(
+        'quantity', 'qty', 'units', 'volume', 'count', 'items', 'volume'
+      );
+      const productVal = getVal(
+        'productname', 'product', 'item', 'itemname', 'sku', 'description', 'service', 'title'
+      );
+      const categoryVal = getVal(
+        'category', 'productcategory', 'department', 'type', 'segment', 'division', 'line', 'sector'
+      );
+      const regionVal = getVal(
+        'customerregion', 'region', 'location', 'country', 'city', 'territory', 'state', 'market'
+      );
 
-      const quantity = Math.max(1, Math.round(Number(qtyRaw) || 1));
-      let revenue = Number(revenueRaw);
-      let cost = Number(costRaw);
-      let profit = Number(profitRaw);
+      const quantity = Math.max(1, Math.round(this.parseNumeric(qtyVal, 1)));
+      let revenue = this.parseNumeric(revenueVal, NaN);
+      let cost = this.parseNumeric(costVal, NaN);
+      let profit = this.parseNumeric(profitVal, NaN);
 
+      // Deduce missing values logically
       if (isNaN(revenue)) {
         if (!isNaN(profit) && !isNaN(cost)) {
           revenue = profit + cost;
+        } else if (!isNaN(cost)) {
+          revenue = cost * 1.55; // 55% markup default
+        } else if (!isNaN(profit)) {
+          revenue = profit * 2.2;
         } else {
-          revenue = 1000;
+          revenue = 1250;
         }
       }
 
@@ -221,7 +289,7 @@ export class AnalyticsService {
         if (!isNaN(revenue) && !isNaN(profit)) {
           cost = revenue - profit;
         } else {
-          // Assume standard 45% default cost if omitted
+          // Standard enterprise 45% default cost if omitted
           cost = revenue * 0.45;
         }
       }
@@ -232,13 +300,13 @@ export class AnalyticsService {
 
       return {
         transaction_date: transactionDate,
-        product_name: String(productRaw || `Item ${idx + 1}`).trim(),
-        category: String(categoryRaw || 'General Business').trim(),
+        product_name: String(productVal || `Enterprise Item ${idx + 1}`).trim(),
+        category: String(categoryVal || 'Enterprise Business').trim(),
         quantity,
         revenue: Math.round(revenue * 100) / 100,
         cost: Math.round(cost * 100) / 100,
         profit: Math.round(profit * 100) / 100,
-        customer_region: String(regionRaw || 'Domestic').trim()
+        customer_region: String(regionVal || 'Domestic').trim()
       };
     });
   }

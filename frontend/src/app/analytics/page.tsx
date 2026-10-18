@@ -272,6 +272,21 @@ export default function AnalyticsPage() {
     if (canViewAnalytics) { fetchLiveAnalytics(); fetchDatasets(); }
   }, [canViewAnalytics, fetchLiveAnalytics, fetchDatasets]);
 
+  const handleLoadSample = async (type: 'retail' | 'saas') => {
+    setUploading(true);
+    setUploadError('');
+    try {
+      const res = await fetch(`/api/v1/analytics/sample-dataset?type=${type}`);
+      const text = await res.text();
+      const blob = new Blob([text], { type: 'text/csv' });
+      const file = new File([blob], `sample_${type}_enterprise_dataset.csv`, { type: 'text/csv' });
+      await handleFileUpload(file);
+    } catch (e: any) {
+      setUploadError('Failed to load sample dataset: ' + e.message);
+      setUploading(false);
+    }
+  };
+
   const handleFileUpload = async (file: File) => {
     setUploading(true); setUploadError(''); setUploadReport(null);
     try {
@@ -414,44 +429,73 @@ export default function AnalyticsPage() {
             {/* Upload Tab */}
             {activeTab === 'upload' && (
               <div className="space-y-6">
-                {canManageAnalytics ? (
-                  <div
-                    onDragOver={e => { e.preventDefault(); setDragOver(true); }}
-                    onDragLeave={() => setDragOver(false)}
-                    onDrop={handleDrop}
-                    className={`relative border-2 border-dashed rounded-3xl p-10 text-center transition-all ${
-                      dragOver ? 'border-violet-500 bg-violet-500/10' : 'border-slate-700 bg-slate-900/50 hover:border-slate-600'
-                    }`}
-                  >
-                    <input ref={fileInputRef} type="file" accept=".csv,.xlsx,.xls" className="hidden" onChange={e => e.target.files?.[0] && handleFileUpload(e.target.files[0])} />
-                    {uploading ? (
-                      <div className="flex flex-col items-center gap-3">
-                        <div className="w-12 h-12 border-4 border-violet-500 border-t-transparent rounded-full animate-spin" />
-                        <p className="text-sm font-semibold text-violet-300">Analyzing dataset…</p>
-                        <p className="text-xs text-slate-500">Parsing rows, computing P&L, generating week-wise report…</p>
+                <div
+                  onDragOver={e => { e.preventDefault(); setDragOver(true); }}
+                  onDragLeave={() => setDragOver(false)}
+                  onDrop={handleDrop}
+                  className={`relative border-2 border-dashed rounded-3xl p-10 text-center transition-all ${
+                    dragOver ? 'border-violet-500 bg-violet-500/10' : 'border-slate-700 bg-slate-900/50 hover:border-slate-600'
+                  }`}
+                >
+                  <input ref={fileInputRef} type="file" accept=".csv,.xlsx,.xls" className="hidden" onChange={e => e.target.files?.[0] && handleFileUpload(e.target.files[0])} />
+                  {uploading ? (
+                    <div className="flex flex-col items-center gap-3">
+                      <div className="w-12 h-12 border-4 border-violet-500 border-t-transparent rounded-full animate-spin" />
+                      <p className="text-sm font-semibold text-violet-300">Analyzing dataset…</p>
+                      <p className="text-xs text-slate-500">Parsing rows, computing P&L, generating week-wise report…</p>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-violet-500/10 border border-violet-500/30 flex items-center justify-center text-violet-400">
+                        <Upload size={28} />
                       </div>
-                    ) : (
-                      <>
-                        <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-violet-500/10 border border-violet-500/30 flex items-center justify-center text-violet-400">
-                          <Upload size={28} />
+                      <h3 className="text-lg font-bold text-white mb-2">Drop your dataset here or choose file</h3>
+                      <p className="text-slate-400 text-sm mb-3">Supports <strong className="text-slate-200">CSV</strong>, <strong className="text-slate-200">Excel (.xlsx, .xls)</strong> — max 30 MB</p>
+                      <p className="text-xs text-slate-500 mb-6">
+                        Flexible column recognition: <code className="bg-slate-800 px-1.5 py-0.5 rounded text-slate-300">Revenue / Sales</code>, <code className="bg-slate-800 px-1.5 py-0.5 rounded text-slate-300">Cost / Expenses</code>, <code className="bg-slate-800 px-1.5 py-0.5 rounded text-slate-300">Date</code>, <code className="bg-slate-800 px-1.5 py-0.5 rounded text-slate-300">Quantity</code>
+                      </p>
+
+                      <div className="flex items-center justify-center gap-3 flex-wrap mb-4">
+                        <button onClick={() => fileInputRef.current?.click()} className="px-6 py-2.5 bg-violet-600 hover:bg-violet-500 text-white text-sm font-bold rounded-xl transition shadow-lg shadow-violet-600/30">
+                          Browse File
+                        </button>
+                        <a
+                          href="/api/v1/analytics/sample-dataset?type=retail"
+                          download="sample_retail_dataset.csv"
+                          className="px-4 py-2.5 bg-slate-800 hover:bg-slate-750 text-slate-300 border border-slate-700 text-xs font-semibold rounded-xl transition flex items-center gap-1.5"
+                        >
+                          <Download size={14} /> Download Sample CSV
+                        </a>
+                      </div>
+
+                      {/* 1-Click Instant Sample Dataset Test Loaders */}
+                      <div className="pt-4 border-t border-slate-800/80 flex flex-col sm:flex-row items-center justify-center gap-2 text-xs">
+                        <span className="text-slate-400 font-semibold flex items-center gap-1">
+                          <Sparkles size={13} className="text-violet-400" /> Instant 1-Click Test Datasets:
+                        </span>
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => handleLoadSample('retail')}
+                            className="px-3 py-1.5 bg-indigo-950/60 hover:bg-indigo-900/80 border border-indigo-700/50 text-indigo-300 rounded-lg text-xs font-bold transition flex items-center gap-1"
+                          >
+                            Retail & AI Server Sales (15 wks)
+                          </button>
+                          <button
+                            onClick={() => handleLoadSample('saas')}
+                            className="px-3 py-1.5 bg-purple-950/60 hover:bg-purple-900/80 border border-purple-700/50 text-purple-300 rounded-lg text-xs font-bold transition flex items-center gap-1"
+                          >
+                            SaaS Subscriptions P&L (10 wks)
+                          </button>
                         </div>
-                        <h3 className="text-lg font-bold text-white mb-2">Drop your dataset here</h3>
-                        <p className="text-slate-400 text-sm mb-4">Supports <strong className="text-slate-200">CSV</strong>, <strong className="text-slate-200">Excel (.xlsx, .xls)</strong> — max 30 MB</p>
-                        <p className="text-xs text-slate-500 mb-5">Required columns: <code className="bg-slate-800 px-1.5 py-0.5 rounded text-slate-300">sale_price</code>, <code className="bg-slate-800 px-1.5 py-0.5 rounded text-slate-300">cost_price</code>, <code className="bg-slate-800 px-1.5 py-0.5 rounded text-slate-300">date</code></p>
-                        <button onClick={() => fileInputRef.current?.click()} className="px-6 py-2.5 bg-violet-600 hover:bg-violet-500 text-white text-sm font-bold rounded-xl transition shadow-lg shadow-violet-600/30">Browse File</button>
-                      </>
-                    )}
-                    {uploadError && (
-                      <div className="mt-4 flex items-center gap-2 text-rose-400 text-xs bg-rose-950/40 border border-rose-500/30 rounded-xl px-4 py-2">
-                        <AlertCircle size={13} /> {uploadError}
                       </div>
-                    )}
-                  </div>
-                ) : (
-                  <div className="flex items-center gap-3 px-5 py-4 bg-amber-950/30 border border-amber-500/30 rounded-2xl text-amber-300 text-sm">
-                    <AlertCircle size={16} /> Dataset upload requires <strong>analytics:manage</strong> permission.
-                  </div>
-                )}
+                    </>
+                  )}
+                  {uploadError && (
+                    <div className="mt-4 flex items-center gap-2 text-rose-400 text-xs bg-rose-950/40 border border-rose-500/30 rounded-xl px-4 py-2">
+                      <AlertCircle size={13} /> {uploadError}
+                    </div>
+                  )}
+                </div>
 
                 {datasets.length > 0 && (
                   <div className="bg-slate-900/80 border border-slate-800 rounded-3xl p-6 space-y-4">
